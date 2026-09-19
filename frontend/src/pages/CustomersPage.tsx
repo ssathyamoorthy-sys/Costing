@@ -4,6 +4,7 @@ import type { Customer } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
+import { ImportExportBar } from '../components/ImportExportBar';
 
 const empty = {
   name: '',
@@ -79,6 +80,13 @@ export function CustomersPage() {
         )}
       </div>
       {error && <Alert type="error">{error}</Alert>}
+      <ImportExportBar
+        exportUrl="/customers/export.xlsx"
+        exportFilename="customers.xlsx"
+        importUrl="/customers/import"
+        canEdit={canEdit}
+        onImported={load}
+      />
       <div className="panel">
         <table>
           <thead>

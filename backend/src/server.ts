@@ -11,6 +11,7 @@ import { customersRouter } from './routes/customers';
 import { exchangeRatesRouter } from './routes/exchangeRates';
 import { quotesRouter } from './routes/quotes';
 import { notificationsRouter } from './routes/notifications';
+import { generalSettingsRouter } from './routes/generalSettings';
 
 const app = express();
 app.use(cors());
@@ -28,6 +29,7 @@ app.use('/api/customers', customersRouter);
 app.use('/api/exchange-rates', exchangeRatesRouter);
 app.use('/api/quotes', quotesRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/general-settings', generalSettingsRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

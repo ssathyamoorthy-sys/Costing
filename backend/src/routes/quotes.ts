@@ -4,6 +4,9 @@ import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { computeQuoteLine } from '../costing/computeLine';
 import { notifyRole, notifyUser } from '../lib/notify';
+import { generateQuotePdf } from '../pdf/quotePdf';
+import { buildWorkbook } from '../xlsx/helpers';
+import type { CostingBreakup } from '../costing/engine';
 
 export const quotesRouter = Router();
 quotesRouter.use(requireAuth);
@@ -32,6 +35,76 @@ quotesRouter.get('/:id', async (req, res) => {
   });
   if (!quote) return res.status(404).json({ error: 'Not found' });
   res.json(quote);
+});
+
+quotesRouter.get('/:id/xlsx', async (req, res) => {
+  const quote = await prisma.quote.findUnique({
+    where: { id: Number(req.params.id) },
+    include: { customer: true, lines: { include: lineFull } },
+  });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+
+  const currencies = quote.currencies.split(',');
+  const columns = [
+    { header: 'S.No', key: 'sno', width: 6 },
+    { header: 'Item', key: 'item', width: 16 },
+    { header: 'Quality', key: 'quality', width: 20 },
+    { header: 'Length (cm)', key: 'length', width: 12 },
+    { header: 'Width (cm)', key: 'width', width: 12 },
+    { header: 'GSM', key: 'gsm', width: 8 },
+    { header: 'Color', key: 'color', width: 14 },
+    { header: 'Qty (Pcs)', key: 'qtyPcs', width: 12 },
+    { header: 'Qty (Kg)', key: 'qtyKg', width: 12 },
+    ...currencies.flatMap((c) => [
+      { header: `Rate/Kg (${c})`, key: `rateKg_${c}`, width: 14 },
+      { header: `Rate/Pc (${c})`, key: `ratePc_${c}`, width: 14 },
+    ]),
+  ];
+
+  const rows = quote.lines.map((line, i) => {
+    const breakup: CostingBreakup | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
+    const row: Record<string, unknown> = {
+      sno: i + 1,
+      item: line.itemType.name,
+      quality: line.product.name || line.product.code,
+      length: line.lengthCm,
+      width: line.widthCm,
+      gsm: line.gsm,
+      color: line.color,
+      qtyPcs: line.qtyPcs,
+      qtyKg: line.qtyKg,
+    };
+    for (const c of currencies) {
+      row[`rateKg_${c}`] = breakup?.ratePerKg?.[c] ?? '';
+      row[`ratePc_${c}`] = breakup?.ratePerPiece?.[c] ?? '';
+    }
+    return row;
+  });
+
+  const wb = buildWorkbook([{ name: 'Price List', columns, rows }]);
+  const ws = wb.getWorksheet('Price List')!;
+  ws.spliceRows(1, 0, [`Quote ${quote.quoteNo} - ${quote.customer.name} - ${quote.createdAt.toDateString()}`]);
+  ws.spliceRows(2, 0, []);
+  ws.getRow(1).font = { bold: true, size: 13 };
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${quote.quoteNo}.xlsx"`);
+  await wb.xlsx.write(res);
+  res.end();
+});
+
+quotesRouter.get('/:id/pdf', async (req, res) => {
+  const quote = await prisma.quote.findUnique({
+    where: { id: Number(req.params.id) },
+    include: { customer: true, lines: { include: lineFull } },
+  });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${quote.quoteNo}.pdf"`);
+  const doc = generateQuotePdf(quote);
+  doc.pipe(res);
+  doc.end();
 });
 
 const createQuoteSchema = z.object({

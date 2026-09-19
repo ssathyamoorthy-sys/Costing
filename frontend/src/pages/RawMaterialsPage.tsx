@@ -4,6 +4,7 @@ import type { RawMaterial, RawMaterialRate } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
+import { ImportExportBar } from '../components/ImportExportBar';
 
 export function RawMaterialsPage() {
   const { user } = useAuth();
@@ -92,6 +93,16 @@ export function RawMaterialsPage() {
       </div>
       {error && <Alert type="error">{error}</Alert>}
       {success && <Alert type="success">{success}</Alert>}
+
+      {isSupervisor && (
+        <ImportExportBar
+          exportUrl="/raw-materials/export.xlsx"
+          exportFilename="raw_materials.xlsx"
+          importUrl="/raw-materials/import"
+          canEdit={isSupervisor}
+          onImported={load}
+        />
+      )}
 
       {isSupervisor && pending.length > 0 && (
         <div className="panel">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError } from '../api';
+import { api, ApiError, openBinary } from '../api';
 import type { CostingBreakup, Product, ProcessingCharge, Quote, QuoteLine } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
@@ -207,6 +207,12 @@ export function QuoteDetailPage() {
               </button>
             </>
           )}
+          <button className="btn" onClick={() => openBinary(`/quotes/${quote.id}/pdf`, `${quote.quoteNo}.pdf`)}>
+            Download PDF
+          </button>
+          <button className="btn" onClick={() => openBinary(`/quotes/${quote.id}/xlsx`, `${quote.quoteNo}.xlsx`)}>
+            Download Excel
+          </button>
           <button className="btn" onClick={() => navigate('/quotes')}>
             Back to list
           </button>

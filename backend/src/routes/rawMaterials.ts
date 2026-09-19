@@ -1,9 +1,13 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { resolveCurrentRate } from '../lib/rates';
 import { notifyRole, notifyUser } from '../lib/notify';
+import { buildWorkbook, parseWorkbookSheet } from '../xlsx/helpers';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 export const rawMaterialsRouter = Router();
 rawMaterialsRouter.use(requireAuth);
@@ -28,6 +32,79 @@ rawMaterialsRouter.post('/', requireRole('SUPERVISOR', 'ADMIN'), async (req, res
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const material = await prisma.rawMaterial.create({ data: parsed.data });
   res.status(201).json(material);
+});
+
+// --- Bulk import / export (xlsx) ---
+
+rawMaterialsRouter.get('/export.xlsx', requireRole('SUPERVISOR', 'ADMIN'), async (_req, res) => {
+  const materials = await prisma.rawMaterial.findMany({ orderBy: { code: 'asc' } });
+  const rows = await Promise.all(
+    materials.map(async (m) => {
+      const rate = await resolveCurrentRate(m.id);
+      return { code: m.code, description: m.description ?? '', pricePerKg: rate?.pricePerKg ?? '' };
+    }),
+  );
+  const wb = buildWorkbook([
+    {
+      name: 'RawMaterials',
+      columns: [
+        { header: 'code', key: 'code', width: 20 },
+        { header: 'description', key: 'description', width: 30 },
+        { header: 'pricePerKg', key: 'pricePerKg', width: 15 },
+      ],
+      rows,
+    },
+  ]);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="raw_materials.xlsx"');
+  await wb.xlsx.write(res);
+  res.end();
+});
+
+rawMaterialsRouter.post('/import', requireRole('SUPERVISOR', 'ADMIN'), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded (field name must be "file")' });
+  try {
+    const rows = await parseWorkbookSheet(req.file.buffer, 'RawMaterials');
+    let created = 0;
+    let updated = 0;
+    let ratesAdded = 0;
+    for (const row of rows) {
+      const code = row.code?.trim();
+      if (!code) continue;
+      const existing = await prisma.rawMaterial.findUnique({ where: { code } });
+      const material = existing
+        ? await prisma.rawMaterial.update({ where: { code }, data: { description: row.description || existing.description } })
+        : await prisma.rawMaterial.create({ data: { code, description: row.description || undefined } });
+      if (existing) updated++;
+      else created++;
+
+      const price = Number(row.pricePerKg);
+      if (row.pricePerKg && !Number.isNaN(price) && price > 0) {
+        const current = await resolveCurrentRate(material.id);
+        if (!current || current.pricePerKg !== price) {
+          await prisma.rawMaterialRate.updateMany({
+            where: { rawMaterialId: material.id, status: 'APPROVED', validTo: null },
+            data: { validTo: new Date() },
+          });
+          await prisma.rawMaterialRate.create({
+            data: {
+              rawMaterialId: material.id,
+              pricePerKg: price,
+              validFrom: new Date(),
+              status: 'APPROVED',
+              enteredById: req.user!.userId,
+              approvedById: req.user!.userId,
+              approvedAt: new Date(),
+            },
+          });
+          ratesAdded++;
+        }
+      }
+    }
+    res.json({ created, updated, ratesAdded, totalRows: rows.length });
+  } catch (err: any) {
+    res.status(422).json({ error: err.message });
+  }
 });
 
 // --- Rates: Purchase submits, Supervisor approves/rejects ---

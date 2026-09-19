@@ -4,6 +4,7 @@ import { api } from '../api';
 import type { Product } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
+import { ImportExportBar } from '../components/ImportExportBar';
 
 export function ProductsPage() {
   const { user } = useAuth();
@@ -11,9 +12,10 @@ export function ProductsPage() {
   const [items, setItems] = useState<Product[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function load() {
     api.get<Product[]>('/products').then(setItems).catch((e) => setError(e.message));
-  }, []);
+  }
+  useEffect(load, []);
 
   return (
     <div>
@@ -26,6 +28,13 @@ export function ProductsPage() {
         )}
       </div>
       {error && <Alert type="error">{error}</Alert>}
+      <ImportExportBar
+        exportUrl="/products/export.xlsx"
+        exportFilename="products.xlsx"
+        importUrl="/products/import"
+        canEdit={canEdit}
+        onImported={load}
+      />
       <div className="panel">
         <table>
           <thead>

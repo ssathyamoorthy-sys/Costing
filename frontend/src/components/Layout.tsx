@@ -14,6 +14,7 @@ const NAV: { to: string; label: string; roles: Role[] }[] = [
   { to: '/processing-charges', label: 'Processing Charges', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/accessory-types', label: 'Accessory Types', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/exchange-rates', label: 'Exchange Rates', roles: ['ADMIN', 'SUPERVISOR'] },
+  { to: '/general-settings', label: 'General Mapping', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/notifications', label: 'Notifications', roles: ['ADMIN', 'SUPERVISOR', 'PURCHASE', 'MERCHANDISER'] },
 ];
 

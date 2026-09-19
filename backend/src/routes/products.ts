@@ -1,8 +1,12 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { validateMixing } from '../costing/engine';
+import { buildWorkbook, parseWorkbookSheet } from '../xlsx/helpers';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 export const productsRouter = Router();
 productsRouter.use(requireAuth);
@@ -17,6 +21,151 @@ productsRouter.get('/', async (_req, res) => {
     orderBy: { code: 'asc' },
   });
   res.json(products);
+});
+
+// NOTE: these two fixed-path routes must stay registered before GET /:id,
+// otherwise Express matches "export.xlsx" as the :id param.
+productsRouter.get('/export.xlsx', requireRole('SUPERVISOR', 'ADMIN'), async (_req, res) => {
+  const products = await prisma.product.findMany({
+    include: { itemType: true, yarnComponents: { include: { rawMaterial: true } } },
+    orderBy: { code: 'asc' },
+  });
+
+  const productRows = products.map((p) => ({
+    code: p.code,
+    name: p.name ?? '',
+    itemType: p.itemType.name,
+    weavingWastagePct: p.weavingWastagePct * 100,
+    weavingSizingCostPerKg: p.weavingSizingCostPerKg,
+    firstVelourCharges: p.firstVelourCharges,
+    firstVelourLossPct: p.firstVelourLossPct * 100,
+    secondVelourCharges: p.secondVelourCharges,
+    secondVelourLossPct: p.secondVelourLossPct * 100,
+    weightLossPct: p.weightLossPct * 100,
+    transportLocalPerKg: p.transportLocalPerKg,
+    rejectionPct: p.rejectionPct * 100,
+  }));
+
+  const yarnRows = products.flatMap((p) =>
+    p.yarnComponents.map((c) => ({
+      productCode: p.code,
+      slot: c.slot,
+      rawMaterialCode: c.rawMaterial.code,
+      mixingPct: c.mixingPct,
+    })),
+  );
+
+  const wb = buildWorkbook([
+    {
+      name: 'Products',
+      columns: [
+        { header: 'code', key: 'code' },
+        { header: 'name', key: 'name', width: 26 },
+        { header: 'itemType', key: 'itemType', width: 16 },
+        { header: 'weavingWastagePct', key: 'weavingWastagePct', width: 16 },
+        { header: 'weavingSizingCostPerKg', key: 'weavingSizingCostPerKg', width: 20 },
+        { header: 'firstVelourCharges', key: 'firstVelourCharges', width: 16 },
+        { header: 'firstVelourLossPct', key: 'firstVelourLossPct', width: 16 },
+        { header: 'secondVelourCharges', key: 'secondVelourCharges', width: 16 },
+        { header: 'secondVelourLossPct', key: 'secondVelourLossPct', width: 16 },
+        { header: 'weightLossPct', key: 'weightLossPct', width: 14 },
+        { header: 'transportLocalPerKg', key: 'transportLocalPerKg', width: 16 },
+        { header: 'rejectionPct', key: 'rejectionPct', width: 14 },
+      ],
+      rows: productRows,
+    },
+    {
+      name: 'YarnComponents',
+      columns: [
+        { header: 'productCode', key: 'productCode', width: 16 },
+        { header: 'slot', key: 'slot', width: 14 },
+        { header: 'rawMaterialCode', key: 'rawMaterialCode', width: 18 },
+        { header: 'mixingPct', key: 'mixingPct', width: 12 },
+      ],
+      rows: yarnRows,
+    },
+  ]);
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="products.xlsx"');
+  await wb.xlsx.write(res);
+  res.end();
+});
+
+productsRouter.post('/import', requireRole('SUPERVISOR', 'ADMIN'), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded (field name must be "file")' });
+  try {
+    const productRows = await parseWorkbookSheet(req.file.buffer, 'Products');
+    const yarnRows = await parseWorkbookSheet(req.file.buffer, 'YarnComponents');
+
+    const itemTypes = await prisma.itemType.findMany();
+    const itemTypeByName = new Map(itemTypes.map((it) => [it.name.toLowerCase(), it]));
+    const rawMaterials = await prisma.rawMaterial.findMany();
+    const rawMaterialByCode = new Map(rawMaterials.map((m) => [m.code.toLowerCase(), m]));
+
+    const yarnByProductCode = new Map<string, { slot: string; rawMaterialId: number; mixingPct: number }[]>();
+    for (const row of yarnRows) {
+      const code = row.productCode?.trim();
+      if (!code) continue;
+      const material = rawMaterialByCode.get((row.rawMaterialCode || '').trim().toLowerCase());
+      if (!material) throw new Error(`YarnComponents row for "${code}": raw material "${row.rawMaterialCode}" not found`);
+      const list = yarnByProductCode.get(code) ?? [];
+      list.push({ slot: row.slot?.trim() || '', rawMaterialId: material.id, mixingPct: Number(row.mixingPct) || 0 });
+      yarnByProductCode.set(code, list);
+    }
+
+    let created = 0;
+    let updated = 0;
+    const warnings: string[] = [];
+
+    for (const row of productRows) {
+      const code = row.code?.trim();
+      if (!code) continue;
+      const itemType = itemTypeByName.get((row.itemType || '').trim().toLowerCase());
+      if (!itemType) throw new Error(`Product "${code}": item type "${row.itemType}" not found`);
+
+      const yarnComponents = yarnByProductCode.get(code) ?? [];
+      if (yarnComponents.length > 0) {
+        const mixing = validateMixing(yarnComponents);
+        if (!mixing.ok) warnings.push(`Product "${code}": yarn mixing % totals ${mixing.total}, expected 100.`);
+      }
+
+      const data = {
+        name: row.name || undefined,
+        itemTypeId: itemType.id,
+        weavingWastagePct: Number(row.weavingWastagePct || 0) / 100,
+        weavingSizingCostPerKg: Number(row.weavingSizingCostPerKg || 0),
+        firstVelourCharges: Number(row.firstVelourCharges || 0),
+        firstVelourLossPct: Number(row.firstVelourLossPct || 0) / 100,
+        secondVelourCharges: Number(row.secondVelourCharges || 0),
+        secondVelourLossPct: Number(row.secondVelourLossPct || 0) / 100,
+        weightLossPct: Number(row.weightLossPct || 0) / 100,
+        transportLocalPerKg: Number(row.transportLocalPerKg || 0),
+        rejectionPct: Number(row.rejectionPct || 0) / 100,
+      };
+
+      const existing = await prisma.product.findUnique({ where: { code } });
+      let productId: number;
+      if (existing) {
+        await prisma.product.update({ where: { code }, data });
+        productId = existing.id;
+        updated++;
+      } else {
+        const createdProduct = await prisma.product.create({ data: { code, ...data } });
+        productId = createdProduct.id;
+        created++;
+      }
+
+      if (yarnComponents.length > 0) {
+        await prisma.productYarnComponent.deleteMany({ where: { productId } });
+        await prisma.productYarnComponent.createMany({ data: yarnComponents.map((c) => ({ ...c, productId })) });
+      }
+    }
+
+    res.json({ created, updated, totalRows: productRows.length, warnings });
+  } catch (err: any) {
+    res.status(422).json({ error: err.message });
+  }
 });
 
 productsRouter.get('/:id', async (req, res) => {
