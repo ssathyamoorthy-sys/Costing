@@ -7,3 +7,4 @@ build/
 backend/prisma/dev.db
 backend/prisma/dev.db-journal
 frontend/.vite/
+*.tsbuildinfo

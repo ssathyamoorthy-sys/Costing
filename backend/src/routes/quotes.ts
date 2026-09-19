@@ -9,7 +9,7 @@ export const quotesRouter = Router();
 quotesRouter.use(requireAuth);
 
 const lineFull = {
-  product: { include: { itemType: true } },
+  product: { include: { itemType: true, yarnComponents: { include: { rawMaterial: true } }, accessories: { include: { accessoryType: true } } } },
   itemType: true,
   accessoryOverrides: { include: { accessoryType: true } },
   materialOverrides: { include: { rawMaterial: true } },

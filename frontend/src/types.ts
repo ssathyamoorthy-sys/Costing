@@ -1,0 +1,189 @@
+export type Role = 'PURCHASE' | 'SUPERVISOR' | 'MERCHANDISER' | 'ADMIN';
+
+export interface User {
+  id: number;
+  username: string;
+  name: string;
+  role: Role;
+  email?: string | null;
+}
+
+export interface RawMaterial {
+  id: number;
+  code: string;
+  description?: string | null;
+  currentRate: { pricePerKg: number; rateId: number; isStale: boolean; validFrom: string; validTo: string | null } | null;
+}
+
+export interface RawMaterialRate {
+  id: number;
+  rawMaterialId: number;
+  pricePerKg: number;
+  validFrom: string;
+  validTo: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  enteredBy?: { name: string };
+  approvedBy?: { name: string } | null;
+  rejectReason?: string | null;
+  createdAt: string;
+}
+
+export interface ItemType {
+  id: number;
+  name: string;
+  stitchingCostPerKg: number;
+  packingCostPerKg: number;
+}
+
+export interface ProcessingCharge {
+  id: number;
+  color: string;
+  ratePerKg: number;
+}
+
+export interface AccessoryType {
+  id: number;
+  name: string;
+}
+
+export interface ProductYarnComponent {
+  id?: number;
+  slot: string;
+  rawMaterialId: number;
+  rawMaterial?: RawMaterial;
+  mixingPct: number;
+}
+
+export interface ProductAccessory {
+  id?: number;
+  accessoryTypeId: number;
+  accessoryType?: AccessoryType;
+  costPerPiece: number;
+}
+
+export interface Product {
+  id: number;
+  code: string;
+  name?: string | null;
+  itemTypeId: number;
+  itemType: ItemType;
+  weavingWastagePct: number;
+  weavingSizingCostPerKg: number;
+  firstVelourCharges: number;
+  firstVelourLossPct: number;
+  secondVelourCharges: number;
+  secondVelourLossPct: number;
+  weightLossPct: number;
+  transportLocalPerKg: number;
+  rejectionPct: number;
+  active: boolean;
+  yarnComponents: ProductYarnComponent[];
+  accessories: ProductAccessory[];
+}
+
+export interface Customer {
+  id: number;
+  name: string;
+  paymentTerms?: string | null;
+  freightTerms?: string | null;
+  wcInterestPct: number;
+  lcInterestPct: number;
+  marginPct: number;
+  commissionPct: number;
+  active: boolean;
+}
+
+export interface ExchangeRate {
+  id: number;
+  currency: string;
+  ratePerInr: number;
+  validFrom: string;
+  createdAt: string;
+}
+
+export type QuoteStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'SENT' | 'WON' | 'LOST';
+
+export interface CostingBreakup {
+  bomMultiplier: number;
+  yarnCostPerKg: number;
+  weavingSizingCostPerKg: number;
+  firstVelourChargesPerKg: number;
+  subtotalAfterWeaving: number;
+  processingChargesPerKg: number;
+  subtotalAfterProcessing: number;
+  secondVelourChargesPerKg: number;
+  subtotalAfterSecondVelour: number;
+  transportLocalPerKg: number;
+  accessoriesPerKg: number;
+  stitchingPackingPerKg: number;
+  subtotalAfterStitching: number;
+  wcInterestPerKg: number;
+  freightExportPerKg: number;
+  subtotalAfterFreight: number;
+  lcInterestPerKg: number;
+  subtotalBeforeMargin: number;
+  marginPerKg: number;
+  subtotalAfterMargin: number;
+  commissionPerKg: number;
+  finalPricePerKgInr: number;
+  pieceWeightGrams: number;
+  qtyKg: number;
+  ratePerKg: Record<string, number>;
+  ratePerPiece: Record<string, number>;
+}
+
+export interface QuoteLine {
+  id: number;
+  quoteId: number;
+  productId: number;
+  product: Product;
+  itemTypeId: number;
+  itemType: ItemType;
+  color: string;
+  lengthCm: number;
+  widthCm: number;
+  gsm: number;
+  qtyPcs: number;
+  targetPrice?: number | null;
+  pieceWeightGrams?: number | null;
+  qtyKg?: number | null;
+  costBreakupJson?: string | null;
+  ratePerKgInr?: number | null;
+  ratePerPieceInr?: number | null;
+  ratePerKgUsd?: number | null;
+  ratePerPieceUsd?: number | null;
+  ratePerKgGbp?: number | null;
+  ratePerPieceGbp?: number | null;
+  ratePerKgEur?: number | null;
+  ratePerPieceEur?: number | null;
+  accessoryOverrides: { id: number; accessoryTypeId: number; accessoryType: AccessoryType; costPerPiece: number }[];
+  materialOverrides: { id: number; rawMaterialId: number; rawMaterial: RawMaterial; overridePricePerKg: number; reason?: string | null }[];
+}
+
+export interface Quote {
+  id: number;
+  quoteNo: string;
+  customerId: number;
+  customer: Customer;
+  status: QuoteStatus;
+  createdById: number;
+  createdBy?: { name: string };
+  approvedBy?: { name: string } | null;
+  remarks?: string | null;
+  validityDate?: string | null;
+  paymentTerms?: string | null;
+  freightTerms?: string | null;
+  currencies: string;
+  version: number;
+  createdAt: string;
+  lines: QuoteLine[];
+}
+
+export interface Notification {
+  id: number;
+  type: string;
+  message: string;
+  read: boolean;
+  emailSent: boolean;
+  createdAt: string;
+}

@@ -32,6 +32,15 @@ rawMaterialsRouter.post('/', requireRole('SUPERVISOR', 'ADMIN'), async (req, res
 
 // --- Rates: Purchase submits, Supervisor approves/rejects ---
 
+rawMaterialsRouter.get('/rates/pending', requireRole('SUPERVISOR', 'ADMIN'), async (_req, res) => {
+  const rates = await prisma.rawMaterialRate.findMany({
+    where: { status: 'PENDING' },
+    orderBy: { createdAt: 'asc' },
+    include: { rawMaterial: true, enteredBy: { select: { name: true } } },
+  });
+  res.json(rates);
+});
+
 rawMaterialsRouter.get('/:id/rates', async (req, res) => {
   const rates = await prisma.rawMaterialRate.findMany({
     where: { rawMaterialId: Number(req.params.id) },
@@ -75,6 +84,21 @@ rawMaterialsRouter.post('/:id/rates', requireRole('PURCHASE', 'ADMIN'), async (r
 
 rawMaterialsRouter.post('/rates/:rateId/approve', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
   const rateId = Number(req.params.rateId);
+  const toApprove = await prisma.rawMaterialRate.findUnique({ where: { id: rateId } });
+  if (!toApprove) return res.status(404).json({ error: 'Rate not found' });
+
+  // Close out any still-open approved rate for the same material so "current rate"
+  // is never ambiguous between two open-ended APPROVED rows.
+  await prisma.rawMaterialRate.updateMany({
+    where: {
+      rawMaterialId: toApprove.rawMaterialId,
+      status: 'APPROVED',
+      validTo: null,
+      id: { not: rateId },
+    },
+    data: { validTo: toApprove.validFrom },
+  });
+
   const rate = await prisma.rawMaterialRate.update({
     where: { id: rateId },
     data: { status: 'APPROVED', approvedById: req.user!.userId, approvedAt: new Date() },
