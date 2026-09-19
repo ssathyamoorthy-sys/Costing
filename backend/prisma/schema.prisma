@@ -1,0 +1,255 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// SQLite has no native enum support in Prisma, so these are plain strings.
+// Allowed values are enforced in the application layer (see src/lib/auth.ts,
+// src/lib/rates.ts, src/routes/quotes.ts):
+//   Role:        PURCHASE | SUPERVISOR | MERCHANDISER | ADMIN
+//   RateStatus:  PENDING | APPROVED | REJECTED
+//   QuoteStatus: DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | SENT | WON | LOST
+
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  passwordHash String
+  name         String
+  email        String?
+  role         String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  enteredRates       RawMaterialRate[]           @relation("EnteredRates")
+  approvedRates      RawMaterialRate[]           @relation("ApprovedRates")
+  materialOverrides  QuoteLineMaterialOverride[]
+  exchangeRates      ExchangeRate[]
+  createdQuotes      Quote[]                     @relation("CreatedQuotes")
+  approvedQuotes      Quote[]                    @relation("ApprovedQuotes")
+  notifications      Notification[]
+}
+
+model RawMaterial {
+  id          Int    @id @default(autoincrement())
+  code        String @unique
+  description String?
+
+  rates      RawMaterialRate[]
+  components ProductYarnComponent[]
+  overrides  QuoteLineMaterialOverride[]
+}
+
+model RawMaterialRate {
+  id             Int        @id @default(autoincrement())
+  rawMaterialId  Int
+  rawMaterial    RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  pricePerKg     Float
+  validFrom      DateTime
+  validTo        DateTime?
+  status         String   @default("PENDING")
+  enteredById    Int
+  enteredBy      User       @relation("EnteredRates", fields: [enteredById], references: [id])
+  approvedById   Int?
+  approvedBy     User?      @relation("ApprovedRates", fields: [approvedById], references: [id])
+  approvedAt     DateTime?
+  rejectReason   String?
+  createdAt      DateTime   @default(now())
+}
+
+model ItemType {
+  id                 Int    @id @default(autoincrement())
+  name               String @unique
+  stitchingCostPerKg Float
+  packingCostPerKg   Float
+
+  products  Product[]
+  quoteLines QuoteLine[]
+}
+
+model Product {
+  id                     Int      @id @default(autoincrement())
+  code                   String   @unique
+  name                   String?
+  itemTypeId             Int
+  itemType               ItemType @relation(fields: [itemTypeId], references: [id])
+  weavingWastagePct      Float
+  weavingSizingCostPerKg Float
+  firstVelourCharges     Float
+  firstVelourLossPct     Float
+  secondVelourCharges    Float
+  secondVelourLossPct    Float
+  weightLossPct          Float
+  transportLocalPerKg    Float
+  rejectionPct           Float
+  active                 Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  yarnComponents ProductYarnComponent[]
+  accessories    ProductAccessory[]
+  quoteLines     QuoteLine[]
+}
+
+model ProductYarnComponent {
+  id            Int    @id @default(autoincrement())
+  productId     Int
+  product       Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  slot          String  // Ground / Pile / Weft / Scoured (or custom label)
+  rawMaterialId Int
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  mixingPct     Float
+}
+
+model ProcessingCharge {
+  id        Int    @id @default(autoincrement())
+  color     String @unique
+  ratePerKg Float
+}
+
+model AccessoryType {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+
+  productDefaults    ProductAccessory[]
+  quoteLineOverrides QuoteLineAccessory[]
+}
+
+model ProductAccessory {
+  id              Int    @id @default(autoincrement())
+  productId       Int
+  product         Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  accessoryTypeId Int
+  accessoryType   AccessoryType @relation(fields: [accessoryTypeId], references: [id])
+  costPerPiece    Float
+
+  @@unique([productId, accessoryTypeId])
+}
+
+model Customer {
+  id             Int      @id @default(autoincrement())
+  name           String   @unique
+  paymentTerms   String?
+  freightTerms   String?
+  wcInterestPct  Float
+  lcInterestPct  Float
+  marginPct      Float
+  commissionPct  Float
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  quotes Quote[]
+}
+
+model ExchangeRate {
+  id           Int      @id @default(autoincrement())
+  currency     String   // USD, GBP, EUR, INR
+  ratePerInr   Float    // INR value of 1 unit of currency (INR itself = 1)
+  validFrom    DateTime
+  enteredById  Int
+  enteredBy    User     @relation(fields: [enteredById], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([currency, validFrom])
+}
+
+model Quote {
+  id            Int         @id @default(autoincrement())
+  quoteNo       String      @unique
+  customerId    Int
+  customer      Customer    @relation(fields: [customerId], references: [id])
+  status        String      @default("DRAFT")
+  createdById   Int
+  createdBy     User        @relation("CreatedQuotes", fields: [createdById], references: [id])
+  approvedById  Int?
+  approvedBy    User?       @relation("ApprovedQuotes", fields: [approvedById], references: [id])
+  approvedAt    DateTime?
+  remarks       String?
+  validityDate  DateTime?
+  paymentTerms  String?
+  freightTerms  String?
+  currencies    String      @default("INR,USD,GBP")
+  version       Int         @default(1)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  lines QuoteLine[]
+}
+
+model QuoteLine {
+  id               Int      @id @default(autoincrement())
+  quoteId          Int
+  quote            Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId        Int
+  product          Product  @relation(fields: [productId], references: [id])
+  itemTypeId       Int
+  itemType         ItemType @relation(fields: [itemTypeId], references: [id])
+  color            String
+  lengthCm         Float
+  widthCm          Float
+  gsm              Float
+  qtyPcs           Int
+  targetPrice      Float?
+
+  pieceWeightGrams Float?
+  qtyKg            Float?
+  costBreakupJson  String?
+
+  ratePerKgInr      Float?
+  ratePerPieceInr   Float?
+  ratePerKgUsd      Float?
+  ratePerPieceUsd   Float?
+  ratePerKgGbp      Float?
+  ratePerPieceGbp   Float?
+  ratePerKgEur      Float?
+  ratePerPieceEur   Float?
+
+  accessoryOverrides QuoteLineAccessory[]
+  materialOverrides  QuoteLineMaterialOverride[]
+}
+
+model QuoteLineAccessory {
+  id              Int    @id @default(autoincrement())
+  quoteLineId     Int
+  quoteLine       QuoteLine @relation(fields: [quoteLineId], references: [id], onDelete: Cascade)
+  accessoryTypeId Int
+  accessoryType   AccessoryType @relation(fields: [accessoryTypeId], references: [id])
+  costPerPiece    Float
+
+  @@unique([quoteLineId, accessoryTypeId])
+}
+
+model QuoteLineMaterialOverride {
+  id                 Int      @id @default(autoincrement())
+  quoteLineId        Int
+  quoteLine          QuoteLine @relation(fields: [quoteLineId], references: [id], onDelete: Cascade)
+  rawMaterialId      Int
+  rawMaterial        RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  overridePricePerKg Float
+  reason             String?
+  setById            Int
+  setBy              User     @relation(fields: [setById], references: [id])
+  notifiedPurchaseAt DateTime?
+  createdAt          DateTime @default(now())
+}
+
+model GeneralSetting {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  message   String
+  read      Boolean  @default(false)
+  emailSent Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
