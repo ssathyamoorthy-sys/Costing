@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import { authRouter } from './routes/auth';
 import { rawMaterialsRouter } from './routes/rawMaterials';
 import { productsRouter } from './routes/products';
@@ -32,10 +34,23 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/general-settings', generalSettingsRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use('/api', (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
   res.status(500).json({ error: 'Internal server error' });
 });
+
+// Single-process deployment: if the frontend has been built (frontend/dist),
+// serve it here so the whole app runs as one Node process on one port.
+// In local dev, frontend/dist won't exist yet - run the Vite dev server
+// separately instead (see frontend/package.json "dev" script).
+const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
 
 const PORT = Number(process.env.PORT || 4000);
 app.listen(PORT, () => {
