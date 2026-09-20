@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { api } from '../api';
@@ -59,7 +59,10 @@ export function Layout() {
         </nav>
         <div className="footer">
           {user.name} · {user.role}
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6, alignItems: 'flex-start' }}>
+            <Link className="btn small" to="/change-password" style={{ whiteSpace: 'nowrap' }}>
+              Change password
+            </Link>
             <button className="btn small" onClick={logout}>
               Log out
             </button>

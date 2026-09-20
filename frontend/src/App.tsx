@@ -15,6 +15,7 @@ import { GeneralSettingsPage } from './pages/GeneralSettingsPage';
 import { QuotesListPage } from './pages/QuotesListPage';
 import { QuoteDetailPage } from './pages/QuoteDetailPage';
 import { NotificationsPage } from './pages/NotificationsPage';
+import { ChangePasswordPage } from './pages/ChangePasswordPage';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/exchange-rates" element={<ExchangeRatesPage />} />
         <Route path="/general-settings" element={<GeneralSettingsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/change-password" element={<ChangePasswordPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
