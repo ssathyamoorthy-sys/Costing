@@ -407,6 +407,15 @@ export function QuoteDetailPage() {
           <button className="btn" onClick={() => openBinary(`/quotes/${quote.id}/xlsx`, `${quote.quoteNo}.xlsx`)}>
             Download Excel
           </button>
+          {isSupervisor && (
+            <button
+              className="btn"
+              onClick={() => openBinary(`/quotes/${quote.id}/xlsx-detailed`, `${quote.quoteNo}-detailed.xlsx`)}
+              title="Full cost build-up as live Excel formulas, one sheet per item"
+            >
+              Download Excel (with formulas)
+            </button>
+          )}
           <button className="btn" onClick={() => navigate('/quotes')}>
             Back to list
           </button>

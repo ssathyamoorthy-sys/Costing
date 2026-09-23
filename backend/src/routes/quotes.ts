@@ -6,6 +6,7 @@ import { computeSet, type SegmentInput } from '../costing/computeSet';
 import { notifyRole, notifyUser } from '../lib/notify';
 import { generateQuotePdf } from '../pdf/quotePdf';
 import { buildWorkbook } from '../xlsx/helpers';
+import { buildDetailedQuoteWorkbook } from '../xlsx/buildDetailedQuoteWorkbook';
 import type { CostingBreakup } from '../costing/engine';
 
 export const quotesRouter = Router();
@@ -146,6 +147,22 @@ quotesRouter.get('/:id/pdf', async (req, res) => {
   const doc = generateQuotePdf(quote);
   doc.pipe(res);
   doc.end();
+});
+
+// Supervisor/Admin only: the full cost build-up as live Excel formulas, one sheet per
+// item (mirrors "Price Working.xlsx") - this is the one export that exposes the
+// underlying cost stack, so it stays out of the Merchandiser-facing PDF/summary xlsx.
+quotesRouter.get('/:id/xlsx-detailed', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const quote = await prisma.quote.findUnique({ where: { id: Number(req.params.id) }, select: { quoteNo: true } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+
+  const wb = await buildDetailedQuoteWorkbook(Number(req.params.id));
+  if (!wb) return res.status(404).json({ error: 'Not found' });
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${quote.quoteNo}-detailed.xlsx"`);
+  await wb.xlsx.write(res);
+  res.end();
 });
 
 const createQuoteSchema = z.object({
