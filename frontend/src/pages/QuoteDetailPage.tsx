@@ -98,6 +98,8 @@ export function QuoteDetailPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
   const [form, setForm] = useState<SetForm>(emptySetForm());
+  const [mode, setMode] = useState<'single' | 'bundle'>('single');
+  const [showYarnEditorSingle, setShowYarnEditorSingle] = useState(false);
 
   const [overrideForSegment, setOverrideForSegment] = useState<number | null>(null);
   const [overrideMaterialId, setOverrideMaterialId] = useState<number | ''>('');
@@ -132,6 +134,8 @@ export function QuoteDetailPage() {
   function startNewSet() {
     setEditingLineId(null);
     setForm(emptySetForm());
+    setMode('single');
+    setShowYarnEditorSingle(false);
     setShowForm(true);
   }
 
@@ -154,7 +158,24 @@ export function QuoteDetailPage() {
         })),
       })),
     });
+    setMode(line.segments.length === 1 && line.segments[0].items.length === 1 ? 'single' : 'bundle');
+    setShowYarnEditorSingle(false);
     setShowForm(true);
+  }
+
+  function canUseSingleMode(f: SetForm) {
+    return f.segments.length === 1 && f.segments[0].items.length === 1;
+  }
+  function toSingleMode() {
+    setForm((f) => {
+      const totalQty = Math.round(Number(f.qtySets || 1) * Number(f.segments[0].items[0].qtyPerSet || 1));
+      return {
+        ...f,
+        qtySets: String(totalQty),
+        segments: [{ ...f.segments[0], items: [{ ...f.segments[0].items[0], qtyPerSet: '1' }] }],
+      };
+    });
+    setMode('single');
   }
 
   function cancelForm() {
@@ -664,11 +685,27 @@ export function QuoteDetailPage() {
       {canEditLines && showForm && (
         <div className="panel">
           <h3 style={{ marginTop: 0 }}>{editingLineId ? 'Edit set' : 'New set'}</h3>
-          <p className="muted" style={{ marginTop: -8 }}>
-            A "set" is usually just one item (pick one product, one item type, one size). For a bundled gift set (e.g.
-            a bath towel + hand towel sold together at one combined price), add more than one segment below - each
-            segment is one yarn quality, and can itself include more than one sized item sharing that yarn.
-          </p>
+
+          <div className="tag-row" style={{ marginBottom: 10 }}>
+            <button className={`btn small ${mode === 'single' ? 'primary' : ''}`} onClick={toSingleMode} disabled={!canUseSingleMode(form)}>
+              Single Product
+            </button>
+            <button className={`btn small ${mode === 'bundle' ? 'primary' : ''}`} onClick={() => setMode('bundle')}>
+              Set / Bundle
+            </button>
+            {!canUseSingleMode(form) && mode === 'bundle' && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                Remove extra segments/items to switch back to Single Product.
+              </span>
+            )}
+          </div>
+          {mode === 'bundle' && (
+            <p className="muted" style={{ marginTop: -6 }}>
+              For a bundled gift set (e.g. a bath towel + hand towel sold together at one combined price), add more
+              than one segment below - each segment is one yarn quality, and can itself include more than one sized
+              item sharing that yarn.
+            </p>
+          )}
 
           <div className="form-grid">
             <div className="field">
@@ -681,7 +718,7 @@ export function QuoteDetailPage() {
               </datalist>
             </div>
             <div className="field">
-              <label>Sets ordered</label>
+              <label>{mode === 'single' ? 'Qty (pcs)' : 'Sets ordered'}</label>
               <input type="number" value={form.qtySets} onChange={(e) => setForm({ ...form, qtySets: e.target.value })} />
             </div>
             <div className="field">
@@ -692,19 +729,21 @@ export function QuoteDetailPage() {
 
           {form.segments.map((seg, segIdx) => (
             <div key={segIdx} className="panel" style={{ marginTop: 14, background: 'var(--bg)' }}>
-              <div className="toolbar">
-                <h4 style={{ margin: 0 }}>
-                  Segment {segIdx + 1}{' '}
-                  <span className={Math.abs(segmentMixingTotal(seg) - 100) > 0.5 ? 'badge rejected' : 'badge approved'}>
-                    mixing {segmentMixingTotal(seg).toFixed(1)}%
-                  </span>
-                </h4>
-                {form.segments.length > 1 && (
-                  <button className="btn small danger" onClick={() => removeSegment(segIdx)}>
-                    Remove segment
-                  </button>
-                )}
-              </div>
+              {mode === 'bundle' && (
+                <div className="toolbar">
+                  <h4 style={{ margin: 0 }}>
+                    Segment {segIdx + 1}{' '}
+                    <span className={Math.abs(segmentMixingTotal(seg) - 100) > 0.5 ? 'badge rejected' : 'badge approved'}>
+                      mixing {segmentMixingTotal(seg).toFixed(1)}%
+                    </span>
+                  </h4>
+                  {form.segments.length > 1 && (
+                    <button className="btn small danger" onClick={() => removeSegment(segIdx)}>
+                      Remove segment
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="field" style={{ maxWidth: 320 }}>
                 <label>Product (quality)</label>
@@ -719,65 +758,84 @@ export function QuoteDetailPage() {
                 </select>
               </div>
 
-              <div style={{ marginTop: 10 }}>
-                <div className="toolbar">
-                  <strong style={{ fontSize: 13 }}>Yarn recipe</strong>
-                  <button className="btn small" onClick={() => addYarnRow(segIdx)}>
-                    + Add slot
-                  </button>
-                </div>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Slot</th>
-                      <th>Raw material</th>
-                      <th className="right">Mixing %</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {seg.yarnComponents.map((row, rowIdx) => (
-                      <tr key={rowIdx}>
-                        <td>
-                          <input value={row.slot} onChange={(e) => updateYarnRow(segIdx, rowIdx, { slot: e.target.value })} style={{ width: 100 }} />
-                        </td>
-                        <td>
-                          <select value={row.rawMaterialId} onChange={(e) => updateYarnRow(segIdx, rowIdx, { rawMaterialId: Number(e.target.value) })}>
-                            <option value="">Select...</option>
-                            {rawMaterials.map((m) => (
-                              <option key={m.id} value={m.id}>
-                                {m.code}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="right">
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={row.mixingPct}
-                            onChange={(e) => updateYarnRow(segIdx, rowIdx, { mixingPct: Number(e.target.value) })}
-                            style={{ width: 70, textAlign: 'right' }}
-                          />
-                        </td>
-                        <td>
-                          <button className="btn small danger" onClick={() => removeYarnRow(segIdx, rowIdx)}>
-                            Remove
-                          </button>
-                        </td>
+              {mode === 'bundle' || showYarnEditorSingle ? (
+                <div style={{ marginTop: 10 }}>
+                  <div className="toolbar">
+                    <strong style={{ fontSize: 13 }}>Yarn recipe</strong>
+                    <div className="tag-row">
+                      <button className="btn small" onClick={() => addYarnRow(segIdx)}>
+                        + Add slot
+                      </button>
+                      {mode === 'single' && (
+                        <button className="btn small" onClick={() => setShowYarnEditorSingle(false)}>
+                          Hide
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Slot</th>
+                        <th>Raw material</th>
+                        <th className="right">Mixing %</th>
+                        <th></th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div style={{ marginTop: 14 }}>
-                <div className="toolbar">
-                  <strong style={{ fontSize: 13 }}>Items (from this segment's yarn)</strong>
-                  <button className="btn small" onClick={() => addItem(segIdx)}>
-                    + Add item
+                    </thead>
+                    <tbody>
+                      {seg.yarnComponents.map((row, rowIdx) => (
+                        <tr key={rowIdx}>
+                          <td>
+                            <input value={row.slot} onChange={(e) => updateYarnRow(segIdx, rowIdx, { slot: e.target.value })} style={{ width: 100 }} />
+                          </td>
+                          <td>
+                            <select value={row.rawMaterialId} onChange={(e) => updateYarnRow(segIdx, rowIdx, { rawMaterialId: Number(e.target.value) })}>
+                              <option value="">Select...</option>
+                              {rawMaterials.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.code}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="right">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={row.mixingPct}
+                              onChange={(e) => updateYarnRow(segIdx, rowIdx, { mixingPct: Number(e.target.value) })}
+                              style={{ width: 70, textAlign: 'right' }}
+                            />
+                          </td>
+                          <td>
+                            <button className="btn small danger" onClick={() => removeYarnRow(segIdx, rowIdx)}>
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={{ marginTop: 10 }}>
+                  <button className="btn small" onClick={() => setShowYarnEditorSingle(true)}>
+                    Edit yarn recipe (advanced)
                   </button>
                 </div>
+              )}
+
+              {mode === 'bundle' && (
+                <div style={{ marginTop: 14 }}>
+                  <div className="toolbar">
+                    <strong style={{ fontSize: 13 }}>Items (from this segment's yarn)</strong>
+                    <button className="btn small" onClick={() => addItem(segIdx)}>
+                      + Add item
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div style={mode === 'single' ? { marginTop: 14 } : undefined}>
                 {seg.items.map((item, itemIdx) => (
                   <div key={itemIdx} className="panel" style={{ marginTop: 8 }}>
                     <div className="form-grid">
@@ -804,10 +862,12 @@ export function QuoteDetailPage() {
                         <label>GSM</label>
                         <input type="number" value={item.gsm} onChange={(e) => updateItem(segIdx, itemIdx, { gsm: e.target.value })} />
                       </div>
-                      <div className="field">
-                        <label>Qty / Set</label>
-                        <input type="number" value={item.qtyPerSet} onChange={(e) => updateItem(segIdx, itemIdx, { qtyPerSet: e.target.value })} />
-                      </div>
+                      {mode === 'bundle' && (
+                        <div className="field">
+                          <label>Qty / Set</label>
+                          <input type="number" value={item.qtyPerSet} onChange={(e) => updateItem(segIdx, itemIdx, { qtyPerSet: e.target.value })} />
+                        </div>
+                      )}
                       {seg.items.length > 1 && (
                         <div className="field" style={{ justifyContent: 'flex-end' }}>
                           <label>&nbsp;</label>
@@ -854,11 +914,13 @@ export function QuoteDetailPage() {
             </div>
           ))}
 
-          <div className="tag-row" style={{ marginTop: 14 }}>
-            <button className="btn" onClick={addSegment}>
-              + Add segment (bundle in another item)
-            </button>
-          </div>
+          {mode === 'bundle' && (
+            <div className="tag-row" style={{ marginTop: 14 }}>
+              <button className="btn" onClick={addSegment}>
+                + Add segment (bundle in another item)
+              </button>
+            </div>
+          )}
 
           <div className="tag-row" style={{ marginTop: 14 }}>
             <button className="btn" onClick={cancelForm}>
