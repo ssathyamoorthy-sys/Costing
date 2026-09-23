@@ -79,9 +79,15 @@ export interface Product {
   accessories: ProductAccessory[];
 }
 
+export type Region = 'Asia' | 'Europe' | 'UK' | 'US' | 'Oceania' | 'Far East' | 'Domestic (India)';
+export type Currency = 'INR' | 'USD' | 'GBP' | 'EUR';
+
 export interface Customer {
   id: number;
   name: string;
+  region: Region;
+  countries: string; // comma-separated
+  currency: Currency;
   paymentTerms?: string | null;
   freightTerms?: string | null;
   wcInterestPct: number;
@@ -171,7 +177,7 @@ export interface Quote {
   validityDate?: string | null;
   paymentTerms?: string | null;
   freightTerms?: string | null;
-  currencies: string;
+  currency: Currency;
   version: number;
   createdAt: string;
   lines: QuoteLine[];

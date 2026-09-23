@@ -23,6 +23,9 @@ customersRouter.get('/export.xlsx', requireRole('SUPERVISOR', 'ADMIN'), async (_
       name: 'Customers',
       columns: [
         { header: 'name', key: 'name', width: 24 },
+        { header: 'region', key: 'region', width: 16 },
+        { header: 'countries', key: 'countries', width: 30 },
+        { header: 'currency', key: 'currency', width: 10 },
         { header: 'paymentTerms', key: 'paymentTerms', width: 35 },
         { header: 'freightTerms', key: 'freightTerms', width: 30 },
         { header: 'wcInterestPct', key: 'wcInterestPct', width: 14 },
@@ -32,6 +35,9 @@ customersRouter.get('/export.xlsx', requireRole('SUPERVISOR', 'ADMIN'), async (_
       ],
       rows: customers.map((c) => ({
         name: c.name,
+        region: c.region,
+        countries: c.countries,
+        currency: c.currency,
         paymentTerms: c.paymentTerms ?? '',
         freightTerms: c.freightTerms ?? '',
         wcInterestPct: c.wcInterestPct * 100,
@@ -58,6 +64,9 @@ customersRouter.post('/import', requireRole('SUPERVISOR', 'ADMIN'), upload.singl
       if (!name) continue;
       const data = {
         name,
+        region: row.region?.trim() || 'Domestic (India)',
+        countries: row.countries?.trim() || '',
+        currency: row.currency?.trim() || 'INR',
         paymentTerms: row.paymentTerms || undefined,
         freightTerms: row.freightTerms || undefined,
         wcInterestPct: Number(row.wcInterestPct || 0) / 100,
@@ -86,8 +95,14 @@ customersRouter.get('/:id', async (req, res) => {
   res.json(customer);
 });
 
+export const REGIONS = ['Asia', 'Europe', 'UK', 'US', 'Oceania', 'Far East', 'Domestic (India)'] as const;
+export const CURRENCIES = ['INR', 'USD', 'GBP', 'EUR'] as const;
+
 const schema = z.object({
   name: z.string().min(1),
+  region: z.enum(REGIONS),
+  countries: z.array(z.string().min(1)).min(1),
+  currency: z.enum(CURRENCIES),
   paymentTerms: z.string().optional(),
   freightTerms: z.string().optional(),
   wcInterestPct: z.number().min(0).max(1),
@@ -99,11 +114,18 @@ const schema = z.object({
 customersRouter.post('/', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  res.status(201).json(await prisma.customer.create({ data: parsed.data }));
+  const { countries, ...rest } = parsed.data;
+  res.status(201).json(await prisma.customer.create({ data: { ...rest, countries: countries.join(',') } }));
 });
 
 customersRouter.put('/:id', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
   const parsed = schema.partial().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  res.json(await prisma.customer.update({ where: { id: Number(req.params.id) }, data: parsed.data }));
+  const { countries, ...rest } = parsed.data;
+  res.json(
+    await prisma.customer.update({
+      where: { id: Number(req.params.id) },
+      data: { ...rest, ...(countries ? { countries: countries.join(',') } : {}) },
+    }),
+  );
 });

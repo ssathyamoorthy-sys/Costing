@@ -129,6 +129,13 @@ model ProductAccessory {
 model Customer {
   id             Int      @id @default(autoincrement())
   name           String   @unique
+  // Region: Asia | Europe | UK | US | Oceania | Far East | Domestic (India)
+  region         String   @default("Domestic (India)")
+  // Comma-separated country names (a customer can span multiple countries), e.g. "India,Nepal"
+  countries      String   @default("")
+  // Quote currency for this customer, independent of region: INR | USD | GBP | EUR.
+  // Domestic (India) customers are always billed in INR regardless of this field (enforced in app code).
+  currency       String   @default("INR")
   paymentTerms   String?
   freightTerms   String?
   wcInterestPct  Float
@@ -168,7 +175,9 @@ model Quote {
   validityDate  DateTime?
   paymentTerms  String?
   freightTerms  String?
-  currencies    String      @default("INR,USD,GBP")
+  // Single currency for this quote, copied from the customer's currency at creation time
+  // (Domestic (India) customers are always INR - enforced on the Customer record itself).
+  currency      String      @default("INR")
   version       Int         @default(1)
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt

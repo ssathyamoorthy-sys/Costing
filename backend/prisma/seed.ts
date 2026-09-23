@@ -166,12 +166,33 @@ async function main() {
     update: {},
     create: {
       name: 'Greenline',
+      region: 'UK',
+      countries: 'United Kingdom',
+      currency: 'GBP',
       paymentTerms: 'LC 60 days or TT 60 days from date of shipment',
       freightTerms: 'FOB Tuticorin sea port',
       wcInterestPct: 0.01,
       lcInterestPct: 0.01,
       marginPct: -0.03,
       commissionPct: 0.03,
+    },
+  });
+
+  console.log('Seeding sample domestic customer (Chennai Retail)...');
+  await prisma.customer.upsert({
+    where: { name: 'Chennai Retail' },
+    update: {},
+    create: {
+      name: 'Chennai Retail',
+      region: 'Domestic (India)',
+      countries: 'India',
+      currency: 'INR',
+      paymentTerms: '30 days credit',
+      freightTerms: 'Ex-factory Coimbatore',
+      wcInterestPct: 0.01,
+      lcInterestPct: 0,
+      marginPct: -0.05,
+      commissionPct: 0,
     },
   });
 

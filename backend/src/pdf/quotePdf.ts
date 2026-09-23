@@ -12,7 +12,7 @@ interface QuoteForPdf {
   validityDate: Date | null;
   paymentTerms: string | null;
   freightTerms: string | null;
-  currencies: string;
+  currency: string;
   createdAt: Date;
   customer: { name: string };
   lines: {
@@ -39,7 +39,8 @@ function drawTableRow(doc: PDFKit.PDFDocument, y: number, cols: { text: string; 
 
 export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
-  const currencies = quote.currencies.split(',');
+  const currency = quote.currency;
+  const symbol = CURRENCY_SYMBOL[currency] || '';
 
   // --- Letterhead ---
   try {
@@ -65,9 +66,10 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   doc.text(`Quote No: ${quote.quoteNo}`, 40, 112);
   doc.text(`Date: ${quote.createdAt.toLocaleDateString()}`, 40, 126);
   doc.text(`Customer: ${quote.customer.name}`, 300, 112);
+  doc.text(`Currency: ${currency}`, 300, 140);
   if (quote.validityDate) doc.text(`Valid until: ${quote.validityDate.toLocaleDateString()}`, 300, 126);
 
-  // --- Line items table (one block per currency) ---
+  // --- Line items table ---
   let y = 160;
   const cols = [
     { key: 'sno', label: 'S.No', width: 28 },
@@ -77,43 +79,38 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
     { key: 'gsm', label: 'GSM', width: 35 },
     { key: 'color', label: 'Color', width: 55 },
     { key: 'qtyPcs', label: 'Qty (Pcs)', width: 55, align: 'right' as const },
-    { key: 'rateKg', label: 'Rate/Kg', width: 55, align: 'right' as const },
-    { key: 'ratePc', label: 'Rate/Pc', width: 55, align: 'right' as const },
+    { key: 'rateKg', label: `Rate/Kg (${currency})`, width: 65, align: 'right' as const },
+    { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 65, align: 'right' as const },
   ];
 
-  for (const currency of currencies) {
-    doc.font('Helvetica-Bold').fontSize(10).text(`Currency: ${currency}`, 40, y);
-    y += 16;
-    drawTableRow(
-      doc,
-      y,
-      cols.map((c) => ({ text: c.label, width: c.width, align: c.align })),
-      { bold: true },
-    );
-    y += 12;
-    doc.moveTo(40, y).lineTo(555, y).strokeColor('#dde3ec').stroke();
-    y += 4;
+  drawTableRow(
+    doc,
+    y,
+    cols.map((c) => ({ text: c.label, width: c.width, align: c.align })),
+    { bold: true },
+  );
+  y += 12;
+  doc.moveTo(40, y).lineTo(555, y).strokeColor('#dde3ec').stroke();
+  y += 4;
 
-    quote.lines.forEach((line, i) => {
-      const breakup: CostingBreakup | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
-      const rateKg = breakup?.ratePerKg?.[currency];
-      const ratePc = breakup?.ratePerPiece?.[currency];
-      const symbol = CURRENCY_SYMBOL[currency] || '';
-      drawTableRow(doc, y, [
-        { text: String(i + 1), width: cols[0].width },
-        { text: line.itemType.name, width: cols[1].width },
-        { text: line.product.name || line.product.code, width: cols[2].width },
-        { text: `${line.lengthCm}x${line.widthCm}`, width: cols[3].width },
-        { text: String(line.gsm), width: cols[4].width },
-        { text: line.color, width: cols[5].width },
-        { text: line.qtyPcs.toLocaleString(), width: cols[6].width, align: 'right' },
-        { text: rateKg != null ? `${symbol}${rateKg.toFixed(2)}` : '-', width: cols[7].width, align: 'right' },
-        { text: ratePc != null ? `${symbol}${ratePc.toFixed(2)}` : '-', width: cols[8].width, align: 'right' },
-      ]);
-      y += 16;
-    });
-    y += 14;
-  }
+  quote.lines.forEach((line, i) => {
+    const breakup: CostingBreakup | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
+    const rateKg = breakup?.ratePerKg?.[currency];
+    const ratePc = breakup?.ratePerPiece?.[currency];
+    drawTableRow(doc, y, [
+      { text: String(i + 1), width: cols[0].width },
+      { text: line.itemType.name, width: cols[1].width },
+      { text: line.product.name || line.product.code, width: cols[2].width },
+      { text: `${line.lengthCm}x${line.widthCm}`, width: cols[3].width },
+      { text: String(line.gsm), width: cols[4].width },
+      { text: line.color, width: cols[5].width },
+      { text: line.qtyPcs.toLocaleString(), width: cols[6].width, align: 'right' },
+      { text: rateKg != null ? `${symbol}${rateKg.toFixed(2)}` : '-', width: cols[7].width, align: 'right' },
+      { text: ratePc != null ? `${symbol}${ratePc.toFixed(2)}` : '-', width: cols[8].width, align: 'right' },
+    ]);
+    y += 16;
+  });
+  y += 14;
 
   // --- Terms & conditions ---
   y += 6;

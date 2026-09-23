@@ -1,13 +1,20 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../api';
-import type { Customer } from '../types';
+import type { Currency, Customer, Region } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
 import { ImportExportBar } from '../components/ImportExportBar';
+import { COUNTRIES } from '../countries';
+
+const REGIONS: Region[] = ['Asia', 'Europe', 'UK', 'US', 'Oceania', 'Far East', 'Domestic (India)'];
+const CURRENCIES: Currency[] = ['INR', 'USD', 'GBP', 'EUR'];
 
 const empty = {
   name: '',
+  region: 'Domestic (India)' as Region,
+  countries: [] as string[],
+  currency: 'INR' as Currency,
   paymentTerms: '',
   freightTerms: '',
   wcInterestPct: 1,
@@ -39,6 +46,9 @@ export function CustomersPage() {
     setEditing(c);
     setForm({
       name: c.name,
+      region: c.region,
+      countries: c.countries ? c.countries.split(',') : [],
+      currency: c.currency,
       paymentTerms: c.paymentTerms || '',
       freightTerms: c.freightTerms || '',
       wcInterestPct: c.wcInterestPct * 100,
@@ -52,6 +62,9 @@ export function CustomersPage() {
   async function save() {
     const payload = {
       name: form.name,
+      region: form.region,
+      countries: form.countries,
+      currency: form.currency,
       paymentTerms: form.paymentTerms,
       freightTerms: form.freightTerms,
       wcInterestPct: form.wcInterestPct / 100,
@@ -92,6 +105,9 @@ export function CustomersPage() {
           <thead>
             <tr>
               <th>Customer</th>
+              <th>Region</th>
+              <th>Countries</th>
+              <th>Currency</th>
               <th>Payment Terms</th>
               <th>Freight Terms</th>
               <th className="right">W.C. Int %</th>
@@ -105,6 +121,9 @@ export function CustomersPage() {
             {items.map((c) => (
               <tr key={c.id}>
                 <td>{c.name}</td>
+                <td className="muted">{c.region}</td>
+                <td className="muted">{c.countries?.split(',').join(', ')}</td>
+                <td className="muted">{c.region === 'Domestic (India)' ? 'INR' : c.currency}</td>
                 <td className="muted">{c.paymentTerms}</td>
                 <td className="muted">{c.freightTerms}</td>
                 <td className="right mono">{(c.wcInterestPct * 100).toFixed(2)}</td>
@@ -130,6 +149,51 @@ export function CustomersPage() {
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label>Customer name</label>
               <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div className="field">
+              <label>Region</label>
+              <select
+                value={form.region}
+                onChange={(e) => {
+                  const region = e.target.value as Region;
+                  setForm({ ...form, region, currency: region === 'Domestic (India)' ? 'INR' : form.currency });
+                }}
+              >
+                {REGIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Currency {form.region === 'Domestic (India)' && <span className="muted">(Domestic is always INR)</span>}</label>
+              <select
+                value={form.currency}
+                disabled={form.region === 'Domestic (India)'}
+                onChange={(e) => setForm({ ...form, currency: e.target.value as Currency })}
+              >
+                {CURRENCIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label>Countries (ctrl/cmd-click to select multiple)</label>
+              <select
+                multiple
+                size={6}
+                value={form.countries}
+                onChange={(e) => setForm({ ...form, countries: Array.from(e.target.selectedOptions, (o) => o.value) })}
+              >
+                {COUNTRIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label>Payment terms</label>
@@ -160,7 +224,7 @@ export function CustomersPage() {
             <button className="btn" onClick={() => setShowForm(false)}>
               Cancel
             </button>
-            <button className="btn primary" onClick={save}>
+            <button className="btn primary" onClick={save} disabled={!form.name || form.countries.length === 0}>
               Save
             </button>
           </div>

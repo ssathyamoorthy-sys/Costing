@@ -27,7 +27,7 @@ const BLURBS: Record<string, { title: string; desc: string; links: { to: string;
   },
   MERCHANDISER: {
     title: 'Merchandiser',
-    desc: 'Build customer quotes: pick a product and customer, enter size/GSM/qty, and get a live costed price in INR, USD, GBP and EUR.',
+    desc: 'Build customer quotes: pick a product and customer, enter size/GSM/qty, and get a live costed price in the customer’s own currency.',
     links: [{ to: '/quotes', label: 'Create a new quote' }],
   },
 };

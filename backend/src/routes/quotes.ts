@@ -56,7 +56,7 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
   });
   if (!quote) return res.status(404).json({ error: 'Not found' });
 
-  const currencies = quote.currencies.split(',');
+  const currencies = [quote.currency];
   const columns = [
     { header: 'S.No', key: 'sno', width: 6 },
     { header: 'Item', key: 'item', width: 16 },
@@ -121,7 +121,6 @@ quotesRouter.get('/:id/pdf', async (req, res) => {
 
 const createQuoteSchema = z.object({
   customerId: z.number().int().positive(),
-  currencies: z.array(z.enum(['INR', 'USD', 'GBP', 'EUR'])).min(1).default(['INR', 'USD', 'GBP']),
   validityDate: z.string().optional(),
 });
 
@@ -138,7 +137,9 @@ quotesRouter.post('/', requireRole('MERCHANDISER', 'ADMIN'), async (req, res) =>
       quoteNo,
       customerId: parsed.data.customerId,
       createdById: req.user!.userId,
-      currencies: parsed.data.currencies.join(','),
+      // Domestic (India) customers are always billed in INR, enforced on the Customer record
+      // itself (see customers.ts) - so this is simply the customer's currency, whatever it is.
+      currency: customer.currency,
       validityDate: parsed.data.validityDate ? new Date(parsed.data.validityDate) : undefined,
       paymentTerms: customer.paymentTerms,
       freightTerms: customer.freightTerms,
@@ -197,7 +198,7 @@ quotesRouter.post('/:id/lines', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN
       widthCm: parsed.data.widthCm,
       gsm: parsed.data.gsm,
       qtyPcs: parsed.data.qtyPcs,
-      currencies: check.quote.currencies.split(','),
+      currencies: [check.quote.currency],
     });
 
     const line = await prisma.quoteLine.create({
@@ -269,7 +270,7 @@ quotesRouter.put('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISOR',
     const { breakup, warnings } = await computeQuoteLine({
       ...merged,
       customerId: check.quote.customerId,
-      currencies: check.quote.currencies.split(','),
+      currencies: [check.quote.currency],
       quoteLineId: lineId,
     });
 
@@ -359,7 +360,7 @@ quotesRouter.post('/:id/lines/:lineId/material-override', requireRole('SUPERVISO
     widthCm: line.widthCm,
     gsm: line.gsm,
     qtyPcs: line.qtyPcs,
-    currencies: line.quote.currencies.split(','),
+    currencies: [line.quote.currency],
     quoteLineId: lineId,
   });
 

@@ -33,7 +33,6 @@ export function QuotesListPage() {
   const [showNew, setShowNew] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerId, setCustomerId] = useState<number | ''>('');
-  const [currencies, setCurrencies] = useState<string[]>(['INR', 'USD', 'GBP']);
 
   function load() {
     api.get<Quote[]>('/quotes').then(setQuotes).catch((e) => setError(e.message));
@@ -48,7 +47,7 @@ export function QuotesListPage() {
   async function createQuote() {
     if (!customerId) return;
     try {
-      const q = await api.post<Quote>('/quotes', { customerId, currencies });
+      const q = await api.post<Quote>('/quotes', { customerId });
       navigate(`/quotes/${q.id}`);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -74,6 +73,7 @@ export function QuotesListPage() {
             <tr>
               <th>Quote No</th>
               <th>Customer</th>
+              <th>Currency</th>
               <th>Status</th>
               <th>Lines</th>
               <th>Created by</th>
@@ -89,6 +89,7 @@ export function QuotesListPage() {
                   </Link>
                 </td>
                 <td>{q.customer?.name}</td>
+                <td className="muted">{q.currency}</td>
                 <td>
                   <span className={`badge ${statusBadgeClass(q.status)}`}>{q.status.replace('_', ' ')}</span>
                 </td>
@@ -115,23 +116,13 @@ export function QuotesListPage() {
                 ))}
               </select>
             </div>
-            <div className="field" style={{ gridColumn: '1 / -1' }}>
-              <label>Currencies to quote in</label>
-              <div className="tag-row">
-                {['INR', 'USD', 'GBP', 'EUR'].map((cur) => (
-                  <label key={cur} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
-                    <input
-                      type="checkbox"
-                      checked={currencies.includes(cur)}
-                      onChange={(e) =>
-                        setCurrencies((prev) => (e.target.checked ? [...prev, cur] : prev.filter((c) => c !== cur)))
-                      }
-                    />
-                    {cur}
-                  </label>
-                ))}
-              </div>
-            </div>
+            {customerId && (
+              <p className="muted" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                This quote will be priced in{' '}
+                <strong>{customers.find((c) => c.id === customerId)?.currency}</strong> - the customer's currency
+                (set in the Customer Master).
+              </p>
+            )}
           </div>
           <div className="modal-actions">
             <button className="btn" onClick={() => setShowNew(false)}>

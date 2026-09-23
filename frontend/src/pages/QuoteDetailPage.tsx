@@ -80,7 +80,7 @@ export function QuoteDetailPage() {
   const isMerchandiser = user?.role === 'MERCHANDISER' || user?.role === 'ADMIN';
   const isSupervisor = user?.role === 'SUPERVISOR' || user?.role === 'ADMIN';
   const canEditLines = (quote.status === 'DRAFT' && isOwner && isMerchandiser) || (isSupervisor && ['DRAFT', 'PENDING_APPROVAL'].includes(quote.status));
-  const currencies = quote.currencies.split(',');
+  const currency = quote.currency;
 
   async function addLine() {
     setError(null);
@@ -287,29 +287,21 @@ export function QuoteDetailPage() {
               <thead>
                 <tr>
                   <th></th>
-                  {currencies.map((c) => (
-                    <th key={c} className="right">
-                      {c}
-                    </th>
-                  ))}
+                  <th className="right">{currency}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <td>Rate / Kg</td>
-                  {currencies.map((c) => (
-                    <td key={c} className="right mono">
-                      {breakup?.ratePerKg?.[c] != null ? `${CURRENCY_SYMBOL[c] || ''}${breakup.ratePerKg[c].toFixed(4)}` : '-'}
-                    </td>
-                  ))}
+                  <td className="right mono">
+                    {breakup?.ratePerKg?.[currency] != null ? `${CURRENCY_SYMBOL[currency] || ''}${breakup.ratePerKg[currency].toFixed(4)}` : '-'}
+                  </td>
                 </tr>
                 <tr>
                   <td>Rate / Piece</td>
-                  {currencies.map((c) => (
-                    <td key={c} className="right mono">
-                      {breakup?.ratePerPiece?.[c] != null ? `${CURRENCY_SYMBOL[c] || ''}${breakup.ratePerPiece[c].toFixed(4)}` : '-'}
-                    </td>
-                  ))}
+                  <td className="right mono">
+                    {breakup?.ratePerPiece?.[currency] != null ? `${CURRENCY_SYMBOL[currency] || ''}${breakup.ratePerPiece[currency].toFixed(4)}` : '-'}
+                  </td>
                 </tr>
               </tbody>
             </table>
