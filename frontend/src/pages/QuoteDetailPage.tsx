@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, openBinary } from '../api';
-import type { CostingBreakup, ItemType, Product, ProcessingCharge, Quote, QuoteLine, RawMaterial } from '../types';
+import type { CostingBreakup, ItemType, Product, ProcessingCharge, Quote, QuoteLine, QuoteTemplate, QuoteTemplateSummary, RawMaterial } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 
@@ -100,6 +100,8 @@ export function QuoteDetailPage() {
   const [form, setForm] = useState<SetForm>(emptySetForm());
   const [mode, setMode] = useState<'single' | 'bundle'>('single');
   const [showYarnEditorSingle, setShowYarnEditorSingle] = useState(false);
+  const [templates, setTemplates] = useState<QuoteTemplateSummary[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
 
   const [overrideForSegment, setOverrideForSegment] = useState<number | null>(null);
   const [overrideMaterialId, setOverrideMaterialId] = useState<number | ''>('');
@@ -119,6 +121,10 @@ export function QuoteDetailPage() {
     api.get<RawMaterial[]>('/raw-materials').then(setRawMaterials);
     api.get<ProcessingCharge[]>('/processing-charges').then(setColors);
   }, []);
+  useEffect(() => {
+    if (!quote) return;
+    api.get<QuoteTemplateSummary[]>(`/quote-templates?customerId=${quote.customerId}`).then(setTemplates);
+  }, [quote?.customerId]);
 
   if (!quote) return error ? <Alert type="error">{error}</Alert> : <p className="muted">Loading...</p>;
 
@@ -136,6 +142,7 @@ export function QuoteDetailPage() {
     setForm(emptySetForm());
     setMode('single');
     setShowYarnEditorSingle(false);
+    setSelectedTemplateId('');
     setShowForm(true);
   }
 
@@ -160,6 +167,7 @@ export function QuoteDetailPage() {
     });
     setMode(line.segments.length === 1 && line.segments[0].items.length === 1 ? 'single' : 'bundle');
     setShowYarnEditorSingle(false);
+    setSelectedTemplateId('');
     setShowForm(true);
   }
 
@@ -176,6 +184,43 @@ export function QuoteDetailPage() {
       };
     });
     setMode('single');
+  }
+
+  async function loadTemplate(templateId: number) {
+    setSelectedTemplateId(String(templateId));
+    const template = await api.get<QuoteTemplate>(`/quote-templates/${templateId}`);
+    setForm({
+      color: template.color,
+      qtySets: String(template.qtySets),
+      targetPrice: '',
+      segments: template.segments.map((seg) => ({
+        productId: seg.productId,
+        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })),
+        items: seg.items.map((it) => ({
+          itemTypeId: it.itemTypeId,
+          lengthCm: String(it.lengthCm),
+          widthCm: String(it.widthCm),
+          gsm: String(it.gsm),
+          qtyPerSet: String(it.qtyPerSet),
+          packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: String(p.ratePerPiece) })),
+        })),
+      })),
+    });
+    setMode(template.segments.length === 1 && template.segments[0].items.length === 1 ? 'single' : 'bundle');
+    setShowYarnEditorSingle(false);
+  }
+
+  async function saveLineAsTemplate(lineId: number) {
+    const name = prompt('Name this template (e.g. "Greenline Standard Gift Set"):');
+    if (!name) return;
+    try {
+      await api.post(`/quotes/${quote!.id}/lines/${lineId}/save-as-template`, { name });
+      const list = await api.get<QuoteTemplateSummary[]>(`/quote-templates?customerId=${quote!.customerId}`);
+      setTemplates(list);
+      alert(`Saved as template "${name}". It'll show up under "Load from template" next time you quote this customer.`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
   }
 
   function cancelForm() {
@@ -497,6 +542,9 @@ export function QuoteDetailPage() {
                 </button>
                 {canEditLines && (
                   <>
+                    <button className="btn small" onClick={() => saveLineAsTemplate(line.id)} title="Save this set's recipe for repeat orders from this customer">
+                      Save as template
+                    </button>
                     <button className="btn small" onClick={() => startEditSet(line)}>
                       Edit
                     </button>
@@ -685,6 +733,20 @@ export function QuoteDetailPage() {
       {canEditLines && showForm && (
         <div className="panel">
           <h3 style={{ marginTop: 0 }}>{editingLineId ? 'Edit set' : 'New set'}</h3>
+
+          {!editingLineId && templates.length > 0 && (
+            <div className="field" style={{ maxWidth: 360, marginBottom: 12 }}>
+              <label>Load from template (this customer's saved recipes)</label>
+              <select value={selectedTemplateId} onChange={(e) => (e.target.value ? loadTemplate(Number(e.target.value)) : setSelectedTemplateId(''))}>
+                <option value="">Start from scratch...</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="tag-row" style={{ marginBottom: 10 }}>
             <button className={`btn small ${mode === 'single' ? 'primary' : ''}`} onClick={toSingleMode} disabled={!canUseSingleMode(form)}>

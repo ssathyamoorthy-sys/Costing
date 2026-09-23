@@ -12,6 +12,7 @@ import { accessoryTypesRouter } from './routes/accessoryTypes';
 import { customersRouter } from './routes/customers';
 import { exchangeRatesRouter } from './routes/exchangeRates';
 import { quotesRouter } from './routes/quotes';
+import { quoteTemplatesRouter } from './routes/quoteTemplates';
 import { notificationsRouter } from './routes/notifications';
 import { generalSettingsRouter } from './routes/generalSettings';
 
@@ -30,6 +31,7 @@ app.use('/api/accessory-types', accessoryTypesRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/exchange-rates', exchangeRatesRouter);
 app.use('/api/quotes', quotesRouter);
+app.use('/api/quote-templates', quoteTemplatesRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/general-settings', generalSettingsRouter);
 

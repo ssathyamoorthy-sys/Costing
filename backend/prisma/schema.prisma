@@ -31,6 +31,7 @@ model User {
   createdQuotes      Quote[]                     @relation("CreatedQuotes")
   approvedQuotes      Quote[]                    @relation("ApprovedQuotes")
   notifications      Notification[]
+  quoteTemplates     QuoteTemplate[]
 }
 
 model RawMaterial {
@@ -42,6 +43,7 @@ model RawMaterial {
   components ProductYarnComponent[]
   segmentYarn QuoteLineSegmentYarn[]
   overrides  QuoteLineSegmentMaterialOverride[]
+  templateSegmentYarn QuoteTemplateSegmentYarn[]
 }
 
 model RawMaterialRate {
@@ -68,6 +70,7 @@ model ItemType {
   packingCostPerKg   Float
 
   quoteLineItems QuoteLineSegmentItem[]
+  templateItems  QuoteTemplateSegmentItem[]
 }
 
 model Product {
@@ -90,6 +93,7 @@ model Product {
   yarnComponents ProductYarnComponent[]
   accessories    ProductAccessory[]
   quoteLineSegments QuoteLineSegment[]
+  templateSegments  QuoteTemplateSegment[]
 }
 
 model ProductYarnComponent {
@@ -114,6 +118,7 @@ model AccessoryType {
 
   productDefaults    ProductAccessory[]
   quoteLineItemOverrides QuoteLineSegmentItemAccessory[]
+  templateItemOverrides  QuoteTemplateSegmentItemAccessory[]
 }
 
 model ProductAccessory {
@@ -147,6 +152,7 @@ model Customer {
   createdAt      DateTime @default(now())
 
   quotes Quote[]
+  quoteTemplates QuoteTemplate[]
 }
 
 model ExchangeRate {
@@ -285,6 +291,82 @@ model QuoteLineSegmentMaterialOverride {
   setBy              User             @relation(fields: [setById], references: [id])
   notifiedPurchaseAt DateTime?
   createdAt          DateTime         @default(now())
+}
+
+// A saved, reusable "recipe" for a repeat order - the same shape as a QuoteLine (Set ->
+// Segment -> Item) but with no pricing. Tied to one customer, named by the merchandiser
+// who saved it. Picking one in "Add line" pre-fills the form; submitting computes fresh
+// pricing off today's raw material rates and customer terms.
+model QuoteTemplate {
+  id          Int      @id @default(autoincrement())
+  customerId  Int
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name        String
+  color       String
+  qtySets     Int      @default(1)
+  createdById Int
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  segments QuoteTemplateSegment[]
+
+  @@unique([customerId, name])
+}
+
+model QuoteTemplateSegment {
+  id         Int           @id @default(autoincrement())
+  templateId Int
+  template   QuoteTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  productId  Int
+  product    Product       @relation(fields: [productId], references: [id])
+  sortOrder  Int           @default(0)
+
+  yarnComponents QuoteTemplateSegmentYarn[]
+  items          QuoteTemplateSegmentItem[]
+}
+
+model QuoteTemplateSegmentYarn {
+  id            Int                  @id @default(autoincrement())
+  segmentId     Int
+  segment       QuoteTemplateSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  slot          String
+  rawMaterialId Int
+  rawMaterial   RawMaterial          @relation(fields: [rawMaterialId], references: [id])
+  mixingPct     Float
+}
+
+model QuoteTemplateSegmentItem {
+  id         Int                  @id @default(autoincrement())
+  segmentId  Int
+  segment    QuoteTemplateSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  itemTypeId Int
+  itemType   ItemType             @relation(fields: [itemTypeId], references: [id])
+  lengthCm   Float
+  widthCm    Float
+  gsm        Float
+  qtyPerSet  Int
+
+  accessoryOverrides QuoteTemplateSegmentItemAccessory[]
+  packagingCharges   QuoteTemplateSegmentItemPackaging[]
+}
+
+model QuoteTemplateSegmentItemAccessory {
+  id              Int                      @id @default(autoincrement())
+  itemId          Int
+  item            QuoteTemplateSegmentItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  accessoryTypeId Int
+  accessoryType   AccessoryType            @relation(fields: [accessoryTypeId], references: [id])
+  costPerPiece    Float
+
+  @@unique([itemId, accessoryTypeId])
+}
+
+model QuoteTemplateSegmentItemPackaging {
+  id           Int                      @id @default(autoincrement())
+  itemId       Int
+  item         QuoteTemplateSegmentItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  description  String
+  ratePerPiece Float
 }
 
 model GeneralSetting {

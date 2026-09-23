@@ -211,6 +211,19 @@ export interface Quote {
   lines: QuoteLine[];
 }
 
+export interface QuoteTemplateSummary {
+  id: number;
+  name: string;
+  color: string;
+  qtySets: number;
+  createdAt: string;
+  createdBy?: { name: string };
+}
+
+export interface QuoteTemplate extends QuoteTemplateSummary {
+  segments: QuoteLineSegment[];
+}
+
 export interface Notification {
   id: number;
   type: string;

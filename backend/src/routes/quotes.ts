@@ -347,6 +347,69 @@ quotesRouter.delete('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISO
   res.status(204).send();
 });
 
+// Saves this line's segments/yarn/items/accessories/packaging as a named, reusable
+// template tied to the quote's customer - no pricing is copied, since applying the
+// template later recomputes it fresh off current rates and customer terms.
+const saveAsTemplateSchema = z.object({ name: z.string().min(1) });
+
+quotesRouter.post('/:id/lines/:lineId/save-as-template', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const parsed = saveAsTemplateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const lineId = Number(req.params.lineId);
+  const line = await prisma.quoteLine.findUnique({
+    where: { id: lineId },
+    include: {
+      quote: { select: { customerId: true } },
+      segments: {
+        orderBy: { sortOrder: 'asc' },
+        include: {
+          yarnComponents: true,
+          items: { include: { accessoryOverrides: true, packagingCharges: true } },
+        },
+      },
+    },
+  });
+  if (!line || line.quoteId !== Number(req.params.id)) return res.status(404).json({ error: 'Line not found' });
+
+  const existing = await prisma.quoteTemplate.findFirst({ where: { customerId: line.quote.customerId, name: parsed.data.name } });
+  if (existing) return res.status(409).json({ error: `A template named "${parsed.data.name}" already exists for this customer` });
+
+  const template = await prisma.quoteTemplate.create({
+    data: {
+      customerId: line.quote.customerId,
+      name: parsed.data.name,
+      color: line.color,
+      qtySets: line.qtySets,
+      createdById: req.user!.userId,
+      segments: {
+        create: line.segments.map((seg, i) => ({
+          productId: seg.productId,
+          sortOrder: i,
+          yarnComponents: { create: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })) },
+          items: {
+            create: seg.items.map((item) => ({
+              itemTypeId: item.itemTypeId,
+              lengthCm: item.lengthCm,
+              widthCm: item.widthCm,
+              gsm: item.gsm,
+              qtyPerSet: item.qtyPerSet,
+              accessoryOverrides: item.accessoryOverrides.length
+                ? { create: item.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })) }
+                : undefined,
+              packagingCharges: item.packagingCharges.length
+                ? { create: item.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })) }
+                : undefined,
+            })),
+          },
+        })),
+      },
+    },
+  });
+
+  res.status(201).json(template);
+});
+
 // Supervisor: override one raw material's price for a specific quote-line SEGMENT
 // (one-off, notifies Purchase). All items in that segment recost off the new price,
 // and the Set's combined rate is recomputed too.
