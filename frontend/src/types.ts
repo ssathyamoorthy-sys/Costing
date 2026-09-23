@@ -136,32 +136,60 @@ export interface CostingBreakup {
   ratePerPiece: Record<string, number>;
 }
 
-export interface QuoteLine {
-  id: number;
-  quoteId: number;
-  productId: number;
-  product: Product;
+export interface QuoteLineSegmentYarn {
+  id?: number;
+  slot: string;
+  rawMaterialId: number;
+  rawMaterial?: RawMaterial;
+  mixingPct: number;
+}
+
+export interface QuoteLineSegmentItemAccessory {
+  id?: number;
+  accessoryTypeId: number;
+  accessoryType?: AccessoryType;
+  costPerPiece: number;
+}
+
+export interface QuoteLineSegmentItemPackaging {
+  id?: number;
+  description: string;
+  ratePerPiece: number;
+}
+
+export interface QuoteLineSegmentItem {
+  id?: number;
   itemTypeId: number;
-  itemType: ItemType;
-  color: string;
+  itemType?: ItemType;
   lengthCm: number;
   widthCm: number;
   gsm: number;
-  qtyPcs: number;
-  targetPrice?: number | null;
+  qtyPerSet: number;
   pieceWeightGrams?: number | null;
   qtyKg?: number | null;
   costBreakupJson?: string | null;
-  ratePerKgInr?: number | null;
-  ratePerPieceInr?: number | null;
-  ratePerKgUsd?: number | null;
-  ratePerPieceUsd?: number | null;
-  ratePerKgGbp?: number | null;
-  ratePerPieceGbp?: number | null;
-  ratePerKgEur?: number | null;
-  ratePerPieceEur?: number | null;
-  accessoryOverrides: { id: number; accessoryTypeId: number; accessoryType: AccessoryType; costPerPiece: number }[];
-  materialOverrides: { id: number; rawMaterialId: number; rawMaterial: RawMaterial; overridePricePerKg: number; reason?: string | null }[];
+  accessoryOverrides: QuoteLineSegmentItemAccessory[];
+  packagingCharges: QuoteLineSegmentItemPackaging[];
+}
+
+export interface QuoteLineSegment {
+  id?: number;
+  productId: number;
+  product?: Product;
+  sortOrder?: number;
+  yarnComponents: QuoteLineSegmentYarn[];
+  items: QuoteLineSegmentItem[];
+  materialOverrides?: { id: number; rawMaterialId: number; rawMaterial: RawMaterial; overridePricePerKg: number; reason?: string | null }[];
+}
+
+export interface QuoteLine {
+  id: number;
+  quoteId: number;
+  color: string;
+  qtySets: number;
+  targetPrice?: number | null;
+  costBreakupJson?: string | null; // { ratePerSet: Record<currency, number> }
+  segments: QuoteLineSegment[];
 }
 
 export interface Quote {

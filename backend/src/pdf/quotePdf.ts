@@ -16,15 +16,20 @@ interface QuoteForPdf {
   createdAt: Date;
   customer: { name: string };
   lines: {
-    product: { code: string; name: string | null };
-    itemType: { name: string };
     color: string;
-    lengthCm: number;
-    widthCm: number;
-    gsm: number;
-    qtyPcs: number;
-    qtyKg: number | null;
+    qtySets: number;
     costBreakupJson: string | null;
+    segments: {
+      product: { code: string; name: string | null };
+      items: {
+        itemType: { name: string };
+        lengthCm: number;
+        widthCm: number;
+        gsm: number;
+        qtyPerSet: number;
+        costBreakupJson: string | null;
+      }[];
+    }[];
   }[];
 }
 
@@ -69,50 +74,81 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   doc.text(`Currency: ${currency}`, 300, 140);
   if (quote.validityDate) doc.text(`Valid until: ${quote.validityDate.toLocaleDateString()}`, 300, 126);
 
-  // --- Line items table ---
-  let y = 160;
   const cols = [
-    { key: 'sno', label: 'S.No', width: 28 },
-    { key: 'item', label: 'Item', width: 90 },
+    { key: 'item', label: 'Item', width: 85 },
     { key: 'quality', label: 'Quality', width: 55 },
     { key: 'size', label: 'Size (cm)', width: 55 },
-    { key: 'gsm', label: 'GSM', width: 35 },
-    { key: 'color', label: 'Color', width: 55 },
-    { key: 'qtyPcs', label: 'Qty (Pcs)', width: 55, align: 'right' as const },
+    { key: 'gsm', label: 'GSM', width: 30 },
+    { key: 'qtyPerSet', label: 'Qty/Set', width: 45, align: 'right' as const },
     { key: 'rateKg', label: `Rate/Kg (${currency})`, width: 65, align: 'right' as const },
     { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 65, align: 'right' as const },
   ];
+  const tableWidth = cols.reduce((s, c) => s + c.width, 0);
 
-  drawTableRow(
-    doc,
-    y,
-    cols.map((c) => ({ text: c.label, width: c.width, align: c.align })),
-    { bold: true },
-  );
-  y += 12;
-  doc.moveTo(40, y).lineTo(555, y).strokeColor('#dde3ec').stroke();
-  y += 4;
+  let y = 160;
+  const pageBottom = 760;
+  function ensureRoom(rowHeight: number) {
+    if (y + rowHeight > pageBottom) {
+      doc.addPage();
+      y = 50;
+    }
+  }
 
-  quote.lines.forEach((line, i) => {
-    const breakup: CostingBreakup | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
-    const rateKg = breakup?.ratePerKg?.[currency];
-    const ratePc = breakup?.ratePerPiece?.[currency];
-    drawTableRow(doc, y, [
-      { text: String(i + 1), width: cols[0].width },
-      { text: line.itemType.name, width: cols[1].width },
-      { text: line.product.name || line.product.code, width: cols[2].width },
-      { text: `${line.lengthCm}x${line.widthCm}`, width: cols[3].width },
-      { text: String(line.gsm), width: cols[4].width },
-      { text: line.color, width: cols[5].width },
-      { text: line.qtyPcs.toLocaleString(), width: cols[6].width, align: 'right' },
-      { text: rateKg != null ? `${symbol}${rateKg.toFixed(2)}` : '-', width: cols[7].width, align: 'right' },
-      { text: ratePc != null ? `${symbol}${ratePc.toFixed(2)}` : '-', width: cols[8].width, align: 'right' },
-    ]);
+  quote.lines.forEach((line, li) => {
+    ensureRoom(60);
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(9.5)
+      .text(`Set #${li + 1} - Color: ${line.color} - ${line.qtySets.toLocaleString()} set(s) ordered`, 40, y);
     y += 16;
+
+    drawTableRow(
+      doc,
+      y,
+      cols.map((c) => ({ text: c.label, width: c.width, align: c.align })),
+      { bold: true },
+    );
+    y += 12;
+    doc.moveTo(40, y).lineTo(40 + tableWidth, y).strokeColor('#dde3ec').stroke();
+    y += 4;
+
+    for (const seg of line.segments) {
+      for (const item of seg.items) {
+        ensureRoom(16);
+        const breakup: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
+        const rateKg = breakup?.ratePerKg?.[currency];
+        const ratePc = breakup?.ratePerPiece?.[currency];
+        drawTableRow(doc, y, [
+          { text: item.itemType.name, width: cols[0].width },
+          { text: seg.product.name || seg.product.code, width: cols[1].width },
+          { text: `${item.lengthCm}x${item.widthCm}`, width: cols[2].width },
+          { text: String(item.gsm), width: cols[3].width },
+          { text: item.qtyPerSet.toLocaleString(), width: cols[4].width, align: 'right' },
+          { text: rateKg != null ? `${symbol}${rateKg.toFixed(2)}` : '-', width: cols[5].width, align: 'right' },
+          { text: ratePc != null ? `${symbol}${ratePc.toFixed(2)}` : '-', width: cols[6].width, align: 'right' },
+        ]);
+        y += 16;
+      }
+    }
+
+    const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
+    const ratePerSet = setRollup?.ratePerSet?.[currency];
+    ensureRoom(20);
+    y += 4;
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(9)
+      .text(
+        `Combined price / set: ${ratePerSet != null ? `${symbol}${ratePerSet.toFixed(2)}` : '-'}`,
+        40,
+        y,
+        { width: tableWidth, align: 'right' },
+      );
+    y += 22;
   });
-  y += 14;
 
   // --- Terms & conditions ---
+  ensureRoom(120);
   y += 6;
   doc.font('Helvetica-Bold').fontSize(10).text('Terms and Conditions', 40, y);
   y += 16;
@@ -127,6 +163,7 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   ].filter(Boolean) as string[];
 
   for (const t of terms) {
+    ensureRoom(14);
     doc.text(`- ${t}`, 40, y, { width: 515 });
     y += 14;
   }

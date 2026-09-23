@@ -26,7 +26,7 @@ model User {
 
   enteredRates       RawMaterialRate[]           @relation("EnteredRates")
   approvedRates      RawMaterialRate[]           @relation("ApprovedRates")
-  materialOverrides  QuoteLineMaterialOverride[]
+  materialOverrides  QuoteLineSegmentMaterialOverride[]
   exchangeRates      ExchangeRate[]
   createdQuotes      Quote[]                     @relation("CreatedQuotes")
   approvedQuotes      Quote[]                    @relation("ApprovedQuotes")
@@ -40,7 +40,8 @@ model RawMaterial {
 
   rates      RawMaterialRate[]
   components ProductYarnComponent[]
-  overrides  QuoteLineMaterialOverride[]
+  segmentYarn QuoteLineSegmentYarn[]
+  overrides  QuoteLineSegmentMaterialOverride[]
 }
 
 model RawMaterialRate {
@@ -66,7 +67,7 @@ model ItemType {
   stitchingCostPerKg Float
   packingCostPerKg   Float
 
-  quoteLines QuoteLine[]
+  quoteLineItems QuoteLineSegmentItem[]
 }
 
 model Product {
@@ -88,7 +89,7 @@ model Product {
 
   yarnComponents ProductYarnComponent[]
   accessories    ProductAccessory[]
-  quoteLines     QuoteLine[]
+  quoteLineSegments QuoteLineSegment[]
 }
 
 model ProductYarnComponent {
@@ -112,7 +113,7 @@ model AccessoryType {
   name String @unique
 
   productDefaults    ProductAccessory[]
-  quoteLineOverrides QuoteLineAccessory[]
+  quoteLineItemOverrides QuoteLineSegmentItemAccessory[]
 }
 
 model ProductAccessory {
@@ -185,61 +186,105 @@ model Quote {
   lines QuoteLine[]
 }
 
+// A quote line is a "Set": one combined price built from one or more Segments (one per
+// yarn quality/Product, e.g. PWD, PDD), each of which can carry one or more sized Items
+// (Item Type + L/W/GSM + qty-in-set). Most quotes are the simple case - one Segment, one
+// Item, qtySets = the order quantity - but this also models a bundled gift set where e.g.
+// a bath towel (PWD) and a hand towel (PDD) are quoted together as one combined-price set.
+// Color applies to the whole set (a matched set is dyed one shade), not per item.
 model QuoteLine {
-  id               Int      @id @default(autoincrement())
-  quoteId          Int
-  quote            Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  productId        Int
-  product          Product  @relation(fields: [productId], references: [id])
-  itemTypeId       Int
-  itemType         ItemType @relation(fields: [itemTypeId], references: [id])
-  color            String
-  lengthCm         Float
-  widthCm          Float
-  gsm              Float
-  qtyPcs           Int
-  targetPrice      Float?
+  id          Int      @id @default(autoincrement())
+  quoteId     Int
+  quote       Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  color       String
+  qtySets     Int
+  targetPrice Float?
+
+  // Rollup of the combined set (sum of all segment-items' piece price * qty-in-set),
+  // in INR and the quote's currency - the authoritative per-item figures live on
+  // QuoteLineSegmentItem. { ratePerSet: Record<currency, number> }
+  costBreakupJson String?
+
+  segments QuoteLineSegment[]
+}
+
+model QuoteLineSegment {
+  id          Int       @id @default(autoincrement())
+  quoteLineId Int
+  quoteLine   QuoteLine @relation(fields: [quoteLineId], references: [id], onDelete: Cascade)
+  productId   Int
+  product     Product   @relation(fields: [productId], references: [id])
+  sortOrder   Int       @default(0)
+
+  // Yarn recipe for this segment - pre-filled from the Product's default recipe when the
+  // segment is created, then freely editable by the merchandiser for this quote only.
+  yarnComponents    QuoteLineSegmentYarn[]
+  items             QuoteLineSegmentItem[]
+  materialOverrides QuoteLineSegmentMaterialOverride[]
+}
+
+model QuoteLineSegmentYarn {
+  id            Int              @id @default(autoincrement())
+  segmentId     Int
+  segment       QuoteLineSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  slot          String           // Ground / Pile / Weft / Border (or custom label)
+  rawMaterialId Int
+  rawMaterial   RawMaterial      @relation(fields: [rawMaterialId], references: [id])
+  mixingPct     Float
+}
+
+model QuoteLineSegmentItem {
+  id         Int              @id @default(autoincrement())
+  segmentId  Int
+  segment    QuoteLineSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  itemTypeId Int
+  itemType   ItemType         @relation(fields: [itemTypeId], references: [id])
+  lengthCm   Float
+  widthCm    Float
+  gsm        Float
+  qtyPerSet  Int              // how many pieces of this item go into one set
 
   pieceWeightGrams Float?
-  qtyKg            Float?
-  costBreakupJson  String?
+  qtyKg            Float?     // pieceWeightGrams * qtyPerSet / 1000 - one set's worth
+  costBreakupJson  String?    // full CostingBreakup (unit ratePerKg/ratePerPiece etc.)
 
-  ratePerKgInr      Float?
-  ratePerPieceInr   Float?
-  ratePerKgUsd      Float?
-  ratePerPieceUsd   Float?
-  ratePerKgGbp      Float?
-  ratePerPieceGbp   Float?
-  ratePerKgEur      Float?
-  ratePerPieceEur   Float?
-
-  accessoryOverrides QuoteLineAccessory[]
-  materialOverrides  QuoteLineMaterialOverride[]
+  accessoryOverrides   QuoteLineSegmentItemAccessory[]
+  packagingCharges     QuoteLineSegmentItemPackaging[]
 }
 
-model QuoteLineAccessory {
-  id              Int    @id @default(autoincrement())
-  quoteLineId     Int
-  quoteLine       QuoteLine @relation(fields: [quoteLineId], references: [id], onDelete: Cascade)
+model QuoteLineSegmentItemAccessory {
+  id              Int                  @id @default(autoincrement())
+  itemId          Int
+  item            QuoteLineSegmentItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   accessoryTypeId Int
-  accessoryType   AccessoryType @relation(fields: [accessoryTypeId], references: [id])
+  accessoryType   AccessoryType        @relation(fields: [accessoryTypeId], references: [id])
   costPerPiece    Float
 
-  @@unique([quoteLineId, accessoryTypeId])
+  @@unique([itemId, accessoryTypeId])
 }
 
-model QuoteLineMaterialOverride {
-  id                 Int      @id @default(autoincrement())
-  quoteLineId        Int
-  quoteLine          QuoteLine @relation(fields: [quoteLineId], references: [id], onDelete: Cascade)
+// Free-text additional packaging charge the merchandiser adds directly on an item -
+// no fixed Accessory Type master entry needed, no approval workflow (correction #3).
+model QuoteLineSegmentItemPackaging {
+  id           Int                  @id @default(autoincrement())
+  itemId       Int
+  item         QuoteLineSegmentItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  description  String
+  ratePerPiece Float
+}
+
+model QuoteLineSegmentMaterialOverride {
+  id                 Int              @id @default(autoincrement())
+  segmentId          Int
+  segment            QuoteLineSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
   rawMaterialId      Int
-  rawMaterial        RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  rawMaterial        RawMaterial      @relation(fields: [rawMaterialId], references: [id])
   overridePricePerKg Float
   reason             String?
   setById            Int
-  setBy              User     @relation(fields: [setById], references: [id])
+  setBy              User             @relation(fields: [setById], references: [id])
   notifiedPurchaseAt DateTime?
-  createdAt          DateTime @default(now())
+  createdAt          DateTime         @default(now())
 }
 
 model GeneralSetting {

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, openBinary } from '../api';
-import type { CostingBreakup, ItemType, Product, ProcessingCharge, Quote, QuoteLine } from '../types';
+import type { CostingBreakup, ItemType, Product, ProcessingCharge, Quote, QuoteLine, RawMaterial } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 
@@ -43,6 +43,45 @@ const breakupRows: { key: keyof CostingBreakup; label: string }[] = [
   { key: 'finalPricePerKgInr', label: 'Final price / kg (INR)' },
 ];
 
+interface FormYarnRow {
+  slot: string;
+  rawMaterialId: number | '';
+  mixingPct: number;
+}
+interface FormPackagingCharge {
+  description: string;
+  ratePerPiece: string;
+}
+interface FormItem {
+  itemTypeId: number | '';
+  lengthCm: string;
+  widthCm: string;
+  gsm: string;
+  qtyPerSet: string;
+  packagingCharges: FormPackagingCharge[];
+}
+interface FormSegment {
+  productId: number | '';
+  yarnComponents: FormYarnRow[];
+  items: FormItem[];
+}
+interface SetForm {
+  color: string;
+  qtySets: string;
+  targetPrice: string;
+  segments: FormSegment[];
+}
+
+function emptyItem(): FormItem {
+  return { itemTypeId: '', lengthCm: '', widthCm: '', gsm: '', qtyPerSet: '1', packagingCharges: [] };
+}
+function emptySegment(): FormSegment {
+  return { productId: '', yarnComponents: [], items: [emptyItem()] };
+}
+function emptySetForm(): SetForm {
+  return { color: '', qtySets: '1', targetPrice: '', segments: [emptySegment()] };
+}
+
 export function QuoteDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -50,13 +89,17 @@ export function QuoteDetailPage() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [itemTypes, setItemTypes] = useState<ItemType[]>([]);
+  const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [colors, setColors] = useState<ProcessingCharge[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
-  const [form, setForm] = useState({ productId: '', itemTypeId: '', color: '', lengthCm: '', widthCm: '', gsm: '', qtyPcs: '', targetPrice: '' });
-  const [overrideForLine, setOverrideForLine] = useState<number | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [editingLineId, setEditingLineId] = useState<number | null>(null);
+  const [form, setForm] = useState<SetForm>(emptySetForm());
+
+  const [overrideForSegment, setOverrideForSegment] = useState<number | null>(null);
   const [overrideMaterialId, setOverrideMaterialId] = useState<number | ''>('');
   const [overridePrice, setOverridePrice] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
@@ -71,6 +114,7 @@ export function QuoteDetailPage() {
   useEffect(() => {
     api.get<Product[]>('/products').then(setProducts);
     api.get<ItemType[]>('/item-types').then(setItemTypes);
+    api.get<RawMaterial[]>('/raw-materials').then(setRawMaterials);
     api.get<ProcessingCharge[]>('/processing-charges').then(setColors);
   }, []);
 
@@ -81,22 +125,165 @@ export function QuoteDetailPage() {
   const isSupervisor = user?.role === 'SUPERVISOR' || user?.role === 'ADMIN';
   const canEditLines = (quote.status === 'DRAFT' && isOwner && isMerchandiser) || (isSupervisor && ['DRAFT', 'PENDING_APPROVAL'].includes(quote.status));
   const currency = quote.currency;
+  const symbol = CURRENCY_SYMBOL[currency] || '';
 
-  async function addLine() {
+  // --- Set builder form helpers ---
+
+  function startNewSet() {
+    setEditingLineId(null);
+    setForm(emptySetForm());
+    setShowForm(true);
+  }
+
+  function startEditSet(line: QuoteLine) {
+    setEditingLineId(line.id);
+    setForm({
+      color: line.color,
+      qtySets: String(line.qtySets),
+      targetPrice: line.targetPrice != null ? String(line.targetPrice) : '',
+      segments: line.segments.map((seg) => ({
+        productId: seg.productId,
+        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })),
+        items: seg.items.map((it) => ({
+          itemTypeId: it.itemTypeId,
+          lengthCm: String(it.lengthCm),
+          widthCm: String(it.widthCm),
+          gsm: String(it.gsm),
+          qtyPerSet: String(it.qtyPerSet),
+          packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: String(p.ratePerPiece) })),
+        })),
+      })),
+    });
+    setShowForm(true);
+  }
+
+  function cancelForm() {
+    setShowForm(false);
+    setEditingLineId(null);
+  }
+
+  function addSegment() {
+    setForm((f) => ({ ...f, segments: [...f.segments, emptySegment()] }));
+  }
+  function removeSegment(segIdx: number) {
+    setForm((f) => ({ ...f, segments: f.segments.filter((_, i) => i !== segIdx) }));
+  }
+  function setSegmentProduct(segIdx: number, productId: number) {
+    const product = products.find((p) => p.id === productId);
+    setForm((f) => ({
+      ...f,
+      segments: f.segments.map((seg, i) =>
+        i === segIdx
+          ? {
+              ...seg,
+              productId,
+              yarnComponents: (product?.yarnComponents ?? []).map((c) => ({ slot: c.slot, rawMaterialId: c.rawMaterialId, mixingPct: c.mixingPct })),
+            }
+          : seg,
+      ),
+    }));
+  }
+  function addYarnRow(segIdx: number) {
+    setForm((f) => ({
+      ...f,
+      segments: f.segments.map((seg, i) => (i === segIdx ? { ...seg, yarnComponents: [...seg.yarnComponents, { slot: '', rawMaterialId: '', mixingPct: 0 }] } : seg)),
+    }));
+  }
+  function updateYarnRow(segIdx: number, rowIdx: number, patch: Partial<FormYarnRow>) {
+    setForm((f) => ({
+      ...f,
+      segments: f.segments.map((seg, i) =>
+        i === segIdx ? { ...seg, yarnComponents: seg.yarnComponents.map((r, ri) => (ri === rowIdx ? { ...r, ...patch } : r)) } : seg,
+      ),
+    }));
+  }
+  function removeYarnRow(segIdx: number, rowIdx: number) {
+    setForm((f) => ({
+      ...f,
+      segments: f.segments.map((seg, i) => (i === segIdx ? { ...seg, yarnComponents: seg.yarnComponents.filter((_, ri) => ri !== rowIdx) } : seg)),
+    }));
+  }
+  function addItem(segIdx: number) {
+    setForm((f) => ({ ...f, segments: f.segments.map((seg, i) => (i === segIdx ? { ...seg, items: [...seg.items, emptyItem()] } : seg)) }));
+  }
+  function removeItem(segIdx: number, itemIdx: number) {
+    setForm((f) => ({
+      ...f,
+      segments: f.segments.map((seg, i) => (i === segIdx ? { ...seg, items: seg.items.filter((_, ii) => ii !== itemIdx) } : seg)),
+    }));
+  }
+  function updateItem(segIdx: number, itemIdx: number, patch: Partial<FormItem>) {
+    setForm((f) => ({
+      ...f,
+      segments: f.segments.map((seg, i) =>
+        i === segIdx ? { ...seg, items: seg.items.map((it, ii) => (ii === itemIdx ? { ...it, ...patch } : it)) } : seg,
+      ),
+    }));
+  }
+  function addPackagingCharge(segIdx: number, itemIdx: number) {
+    updateItem(segIdx, itemIdx, {
+      packagingCharges: [...form.segments[segIdx].items[itemIdx].packagingCharges, { description: '', ratePerPiece: '' }],
+    });
+  }
+  function updatePackagingCharge(segIdx: number, itemIdx: number, chargeIdx: number, patch: Partial<FormPackagingCharge>) {
+    const item = form.segments[segIdx].items[itemIdx];
+    updateItem(segIdx, itemIdx, {
+      packagingCharges: item.packagingCharges.map((c, ci) => (ci === chargeIdx ? { ...c, ...patch } : c)),
+    });
+  }
+  function removePackagingCharge(segIdx: number, itemIdx: number, chargeIdx: number) {
+    const item = form.segments[segIdx].items[itemIdx];
+    updateItem(segIdx, itemIdx, { packagingCharges: item.packagingCharges.filter((_, ci) => ci !== chargeIdx) });
+  }
+
+  function formIsValid() {
+    if (!form.color || !form.qtySets) return false;
+    for (const seg of form.segments) {
+      if (!seg.productId || seg.yarnComponents.length === 0) return false;
+      for (const y of seg.yarnComponents) {
+        if (!y.rawMaterialId) return false;
+      }
+      if (seg.items.length === 0) return false;
+      for (const it of seg.items) {
+        if (!it.itemTypeId || !it.lengthCm || !it.widthCm || !it.gsm || !it.qtyPerSet) return false;
+      }
+    }
+    return true;
+  }
+
+  function buildPayload() {
+    return {
+      color: form.color,
+      qtySets: Number(form.qtySets),
+      targetPrice: form.targetPrice ? Number(form.targetPrice) : undefined,
+      segments: form.segments.map((seg) => ({
+        productId: Number(seg.productId),
+        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: Number(y.rawMaterialId), mixingPct: Number(y.mixingPct) })),
+        items: seg.items.map((it) => ({
+          itemTypeId: Number(it.itemTypeId),
+          lengthCm: Number(it.lengthCm),
+          widthCm: Number(it.widthCm),
+          gsm: Number(it.gsm),
+          qtyPerSet: Number(it.qtyPerSet),
+          packagingCharges: it.packagingCharges
+            .filter((p) => p.description && p.ratePerPiece)
+            .map((p) => ({ description: p.description, ratePerPiece: Number(p.ratePerPiece) })),
+        })),
+      })),
+    };
+  }
+
+  async function submitSet() {
     setError(null);
     try {
-      const res = await api.post<{ line: QuoteLine; warnings: string[] }>(`/quotes/${quote!.id}/lines`, {
-        productId: Number(form.productId),
-        itemTypeId: Number(form.itemTypeId),
-        color: form.color,
-        lengthCm: Number(form.lengthCm),
-        widthCm: Number(form.widthCm),
-        gsm: Number(form.gsm),
-        qtyPcs: Number(form.qtyPcs),
-        targetPrice: form.targetPrice ? Number(form.targetPrice) : undefined,
-      });
+      const payload = buildPayload();
+      const res = editingLineId
+        ? await api.put<{ line: QuoteLine; warnings: string[] }>(`/quotes/${quote!.id}/lines/${editingLineId}`, payload)
+        : await api.post<{ line: QuoteLine; warnings: string[] }>(`/quotes/${quote!.id}/lines`, payload);
       setWarnings(res.warnings);
-      setForm({ productId: '', itemTypeId: '', color: '', lengthCm: '', widthCm: '', gsm: '', qtyPcs: '', targetPrice: '' });
+      setShowForm(false);
+      setEditingLineId(null);
+      setForm(emptySetForm());
       load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -104,7 +291,7 @@ export function QuoteDetailPage() {
   }
 
   async function removeLine(lineId: number) {
-    if (!confirm('Remove this line?')) return;
+    if (!confirm('Remove this set?')) return;
     try {
       await api.del(`/quotes/${quote!.id}/lines/${lineId}`);
       load();
@@ -155,15 +342,15 @@ export function QuoteDetailPage() {
     }
   }
 
-  async function submitOverride(lineId: number) {
+  async function submitOverride(segmentId: number) {
     if (!overrideMaterialId || !overridePrice) return;
     try {
-      await api.post(`/quotes/${quote!.id}/lines/${lineId}/material-override`, {
+      await api.post(`/quotes/${quote!.id}/segments/${segmentId}/material-override`, {
         rawMaterialId: overrideMaterialId,
         overridePricePerKg: Number(overridePrice),
         reason: overrideReason || undefined,
       });
-      setOverrideForLine(null);
+      setOverrideForSegment(null);
       setOverrideMaterialId('');
       setOverridePrice('');
       setOverrideReason('');
@@ -171,6 +358,10 @@ export function QuoteDetailPage() {
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     }
+  }
+
+  function segmentMixingTotal(seg: FormSegment) {
+    return seg.yarnComponents.reduce((s, r) => s + (Number(r.mixingPct) || 0), 0);
   }
 
   return (
@@ -259,26 +450,30 @@ export function QuoteDetailPage() {
         </div>
       </div>
 
-      {quote.lines.map((line) => {
-        const breakup: CostingBreakup | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
+      {quote.lines.map((line, lineIdx) => {
+        const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
+        const ratePerSet = setRollup?.ratePerSet?.[currency];
         const isExpanded = expanded[line.id];
         return (
           <div className="line-card" key={line.id}>
             <div className="line-head">
               <div>
-                <strong>{line.product.code}</strong> - {line.itemType?.name} - {line.color} - {line.lengthCm}x{line.widthCm}cm, GSM {line.gsm} - Qty {line.qtyPcs} pcs
-                {line.pieceWeightGrams && <span className="muted"> ({line.pieceWeightGrams.toFixed(0)}g/pc, {line.qtyKg?.toFixed(1)} kg total)</span>}
+                <strong>Set #{lineIdx + 1}</strong> - Color: {line.color} - {line.qtySets.toLocaleString()} set(s) ordered
+                {line.segments.length > 1 && <span className="muted"> ({line.segments.length} segments, bundled)</span>}
               </div>
               <div className="tag-row">
-                {isSupervisor && (
-                  <button className="btn small" onClick={() => setExpanded((e) => ({ ...e, [line.id]: !e[line.id] }))}>
-                    {isExpanded ? 'Hide' : 'Show'} cost breakup
-                  </button>
-                )}
+                <button className="btn small" onClick={() => setExpanded((e) => ({ ...e, [line.id]: !e[line.id] }))}>
+                  {isExpanded ? 'Hide' : 'Show'} details
+                </button>
                 {canEditLines && (
-                  <button className="btn small danger" onClick={() => removeLine(line.id)}>
-                    Remove
-                  </button>
+                  <>
+                    <button className="btn small" onClick={() => startEditSet(line)}>
+                      Edit
+                    </button>
+                    <button className="btn small danger" onClick={() => removeLine(line.id)}>
+                      Remove
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -292,103 +487,157 @@ export function QuoteDetailPage() {
               </thead>
               <tbody>
                 <tr>
-                  <td>Rate / Kg</td>
-                  <td className="right mono">
-                    {breakup?.ratePerKg?.[currency] != null ? `${CURRENCY_SYMBOL[currency] || ''}${breakup.ratePerKg[currency].toFixed(4)}` : '-'}
-                  </td>
+                  <td>Combined price / set</td>
+                  <td className="right mono">{ratePerSet != null ? `${symbol}${ratePerSet.toFixed(4)}` : '-'}</td>
                 </tr>
                 <tr>
-                  <td>Rate / Piece</td>
-                  <td className="right mono">
-                    {breakup?.ratePerPiece?.[currency] != null ? `${CURRENCY_SYMBOL[currency] || ''}${breakup.ratePerPiece[currency].toFixed(4)}` : '-'}
-                  </td>
+                  <td>Total for {line.qtySets} set(s)</td>
+                  <td className="right mono">{ratePerSet != null ? `${symbol}${(ratePerSet * line.qtySets).toFixed(2)}` : '-'}</td>
                 </tr>
               </tbody>
             </table>
 
-            {isSupervisor && isExpanded && breakup && (
+            {isExpanded && (
               <div style={{ marginTop: 14 }}>
-                <table className="breakup-table">
-                  <thead>
-                    <tr>
-                      <th>Cost stack (per kg, INR)</th>
-                      <th>Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {breakupRows.map((r) => (
-                      <tr key={r.key}>
-                        <td>{r.label}</td>
-                        <td className="mono">₹{Number(breakup[r.key]).toFixed(4)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                {line.segments.map((seg) => {
+                  const segLabel = seg.product?.name || seg.product?.code || `Product ${seg.productId}`;
+                  return (
+                    <div key={seg.id} style={{ marginBottom: 18, paddingBottom: 14, borderBottom: '1px solid var(--border)' }}>
+                      <h4 style={{ margin: '0 0 8px' }}>
+                        Segment: {seg.product?.code} - {segLabel}
+                      </h4>
 
-                {isSupervisor && (
-                  <div style={{ marginTop: 14 }}>
-                    <h4 style={{ margin: '0 0 8px' }}>Yarn components (raw material price used)</h4>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Slot</th>
-                          <th>Material</th>
-                          <th className="right">Mixing %</th>
-                          <th className="right">Override</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {line.product.yarnComponents.map((c) => {
-                          const ov = line.materialOverrides.find((o) => o.rawMaterialId === c.rawMaterialId);
-                          return (
-                            <tr key={c.rawMaterialId}>
-                              <td>{c.slot}</td>
-                              <td>{c.rawMaterial?.code}</td>
-                              <td className="right mono">{c.mixingPct}</td>
-                              <td className="right mono">{ov ? `₹${ov.overridePricePerKg} (${ov.reason || 'override'})` : '-'}</td>
-                              <td className="right">
-                                <button
-                                  className="btn small"
-                                  onClick={() => {
-                                    setOverrideForLine(line.id);
-                                    setOverrideMaterialId(c.rawMaterialId);
-                                    setOverridePrice(String(ov?.overridePricePerKg ?? ''));
-                                  }}
-                                >
-                                  Override price
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Item</th>
+                            <th>Size (cm)</th>
+                            <th className="right">GSM</th>
+                            <th className="right">Qty/Set</th>
+                            <th className="right">Rate/Kg</th>
+                            <th className="right">Rate/Pc</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {seg.items.map((item) => {
+                            const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
+                            return (
+                              <Fragment key={item.id}>
+                                <tr>
+                                  <td>{item.itemType?.name}</td>
+                                  <td>
+                                    {item.lengthCm}x{item.widthCm}
+                                  </td>
+                                  <td className="right mono">{item.gsm}</td>
+                                  <td className="right mono">{item.qtyPerSet}</td>
+                                  <td className="right mono">{b?.ratePerKg?.[currency] != null ? `${symbol}${b.ratePerKg[currency].toFixed(4)}` : '-'}</td>
+                                  <td className="right mono">{b?.ratePerPiece?.[currency] != null ? `${symbol}${b.ratePerPiece[currency].toFixed(4)}` : '-'}</td>
+                                </tr>
+                                {item.packagingCharges.length > 0 && (
+                                  <tr>
+                                    <td colSpan={6} className="muted" style={{ fontSize: 12 }}>
+                                      + Packaging: {item.packagingCharges.map((p) => `${p.description} (₹${p.ratePerPiece}/pc)`).join(', ')}
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
 
-                    {overrideForLine === line.id && (
-                      <div className="panel" style={{ marginTop: 10, background: 'var(--blue-light)' }}>
-                        <div className="form-grid">
-                          <div className="field">
-                            <label>Override price / kg (₹)</label>
-                            <input type="number" value={overridePrice} onChange={(e) => setOverridePrice(e.target.value)} />
+                      {isSupervisor && (
+                        <>
+                          {seg.items.map((item) => {
+                            const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
+                            if (!b || !('yarnCostPerKg' in b)) return null;
+                            return (
+                              <table className="breakup-table" key={`bk-${item.id}`} style={{ marginTop: 8 }}>
+                                <thead>
+                                  <tr>
+                                    <th>{item.itemType?.name} - cost stack (per kg, INR)</th>
+                                    <th>Value</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {breakupRows.map((r) => (
+                                    <tr key={r.key}>
+                                      <td>{r.label}</td>
+                                      <td className="mono">₹{Number(b[r.key]).toFixed(4)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            );
+                          })}
+
+                          <div style={{ marginTop: 10 }}>
+                            <h4 style={{ margin: '0 0 8px' }}>Yarn recipe (raw material price used)</h4>
+                            <table>
+                              <thead>
+                                <tr>
+                                  <th>Slot</th>
+                                  <th>Material</th>
+                                  <th className="right">Mixing %</th>
+                                  <th className="right">Override</th>
+                                  <th></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {seg.yarnComponents.map((c) => {
+                                  const ov = seg.materialOverrides?.find((o) => o.rawMaterialId === c.rawMaterialId);
+                                  return (
+                                    <tr key={c.id}>
+                                      <td>{c.slot}</td>
+                                      <td>{c.rawMaterial?.code}</td>
+                                      <td className="right mono">{c.mixingPct}</td>
+                                      <td className="right mono">{ov ? `₹${ov.overridePricePerKg} (${ov.reason || 'override'})` : '-'}</td>
+                                      <td className="right">
+                                        <button
+                                          className="btn small"
+                                          onClick={() => {
+                                            setOverrideForSegment(seg.id!);
+                                            setOverrideMaterialId(c.rawMaterialId);
+                                            setOverridePrice(String(ov?.overridePricePerKg ?? ''));
+                                          }}
+                                        >
+                                          Override price
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+
+                            {overrideForSegment === seg.id && (
+                              <div className="panel" style={{ marginTop: 10, background: 'var(--blue-light)' }}>
+                                <div className="form-grid">
+                                  <div className="field">
+                                    <label>Override price / kg (₹)</label>
+                                    <input type="number" value={overridePrice} onChange={(e) => setOverridePrice(e.target.value)} />
+                                  </div>
+                                  <div className="field">
+                                    <label>Reason (notified to Purchase)</label>
+                                    <input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="e.g. bulk deal for this order" />
+                                  </div>
+                                </div>
+                                <div className="modal-actions">
+                                  <button className="btn" onClick={() => setOverrideForSegment(null)}>
+                                    Cancel
+                                  </button>
+                                  <button className="btn primary" onClick={() => submitOverride(seg.id!)}>
+                                    Apply override
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
-                          <div className="field">
-                            <label>Reason (notified to Purchase)</label>
-                            <input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="e.g. bulk deal for this order" />
-                          </div>
-                        </div>
-                        <div className="modal-actions">
-                          <button className="btn" onClick={() => setOverrideForLine(null)}>
-                            Cancel
-                          </button>
-                          <button className="btn primary" onClick={() => submitOverride(line.id)}>
-                            Apply override
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -397,32 +646,22 @@ export function QuoteDetailPage() {
 
       {quote.lines.length === 0 && <p className="muted">No lines yet.</p>}
 
-      {canEditLines && (
+      {canEditLines && !showForm && (
+        <button className="btn primary" onClick={startNewSet}>
+          + Add set
+        </button>
+      )}
+
+      {canEditLines && showForm && (
         <div className="panel">
-          <h3 style={{ marginTop: 0 }}>Add line</h3>
+          <h3 style={{ marginTop: 0 }}>{editingLineId ? 'Edit set' : 'New set'}</h3>
+          <p className="muted" style={{ marginTop: -8 }}>
+            A "set" is usually just one item (pick one product, one item type, one size). For a bundled gift set (e.g.
+            a bath towel + hand towel sold together at one combined price), add more than one segment below - each
+            segment is one yarn quality, and can itself include more than one sized item sharing that yarn.
+          </p>
+
           <div className="form-grid">
-            <div className="field">
-              <label>Product (quality)</label>
-              <select value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })}>
-                <option value="">Select...</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.code}{p.name ? ` - ${p.name}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label>Item Type</label>
-              <select value={form.itemTypeId} onChange={(e) => setForm({ ...form, itemTypeId: e.target.value })}>
-                <option value="">Select...</option>
-                {itemTypes.map((it) => (
-                  <option key={it.id} value={it.id}>
-                    {it.name}
-                  </option>
-                ))}
-              </select>
-            </div>
             <div className="field">
               <label>Color</label>
               <input list="colors" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
@@ -433,33 +672,191 @@ export function QuoteDetailPage() {
               </datalist>
             </div>
             <div className="field">
-              <label>Length (cm)</label>
-              <input type="number" value={form.lengthCm} onChange={(e) => setForm({ ...form, lengthCm: e.target.value })} />
-            </div>
-            <div className="field">
-              <label>Width (cm)</label>
-              <input type="number" value={form.widthCm} onChange={(e) => setForm({ ...form, widthCm: e.target.value })} />
-            </div>
-            <div className="field">
-              <label>GSM</label>
-              <input type="number" value={form.gsm} onChange={(e) => setForm({ ...form, gsm: e.target.value })} />
-            </div>
-            <div className="field">
-              <label>Qty (pcs)</label>
-              <input type="number" value={form.qtyPcs} onChange={(e) => setForm({ ...form, qtyPcs: e.target.value })} />
+              <label>Sets ordered</label>
+              <input type="number" value={form.qtySets} onChange={(e) => setForm({ ...form, qtySets: e.target.value })} />
             </div>
             <div className="field">
               <label>Target price (optional)</label>
               <input type="number" value={form.targetPrice} onChange={(e) => setForm({ ...form, targetPrice: e.target.value })} />
             </div>
           </div>
-          <div style={{ marginTop: 14 }}>
-            <button
-              className="btn primary"
-              onClick={addLine}
-              disabled={!form.productId || !form.itemTypeId || !form.color || !form.lengthCm || !form.widthCm || !form.gsm || !form.qtyPcs}
-            >
-              Add line
+
+          {form.segments.map((seg, segIdx) => (
+            <div key={segIdx} className="panel" style={{ marginTop: 14, background: 'var(--bg)' }}>
+              <div className="toolbar">
+                <h4 style={{ margin: 0 }}>
+                  Segment {segIdx + 1}{' '}
+                  <span className={Math.abs(segmentMixingTotal(seg) - 100) > 0.5 ? 'badge rejected' : 'badge approved'}>
+                    mixing {segmentMixingTotal(seg).toFixed(1)}%
+                  </span>
+                </h4>
+                {form.segments.length > 1 && (
+                  <button className="btn small danger" onClick={() => removeSegment(segIdx)}>
+                    Remove segment
+                  </button>
+                )}
+              </div>
+
+              <div className="field" style={{ maxWidth: 320 }}>
+                <label>Product (quality)</label>
+                <select value={seg.productId} onChange={(e) => setSegmentProduct(segIdx, Number(e.target.value))}>
+                  <option value="">Select...</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.code}
+                      {p.name ? ` - ${p.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                <div className="toolbar">
+                  <strong style={{ fontSize: 13 }}>Yarn recipe</strong>
+                  <button className="btn small" onClick={() => addYarnRow(segIdx)}>
+                    + Add slot
+                  </button>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Slot</th>
+                      <th>Raw material</th>
+                      <th className="right">Mixing %</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {seg.yarnComponents.map((row, rowIdx) => (
+                      <tr key={rowIdx}>
+                        <td>
+                          <input value={row.slot} onChange={(e) => updateYarnRow(segIdx, rowIdx, { slot: e.target.value })} style={{ width: 100 }} />
+                        </td>
+                        <td>
+                          <select value={row.rawMaterialId} onChange={(e) => updateYarnRow(segIdx, rowIdx, { rawMaterialId: Number(e.target.value) })}>
+                            <option value="">Select...</option>
+                            {rawMaterials.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.code}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="right">
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={row.mixingPct}
+                            onChange={(e) => updateYarnRow(segIdx, rowIdx, { mixingPct: Number(e.target.value) })}
+                            style={{ width: 70, textAlign: 'right' }}
+                          />
+                        </td>
+                        <td>
+                          <button className="btn small danger" onClick={() => removeYarnRow(segIdx, rowIdx)}>
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <div className="toolbar">
+                  <strong style={{ fontSize: 13 }}>Items (from this segment's yarn)</strong>
+                  <button className="btn small" onClick={() => addItem(segIdx)}>
+                    + Add item
+                  </button>
+                </div>
+                {seg.items.map((item, itemIdx) => (
+                  <div key={itemIdx} className="panel" style={{ marginTop: 8 }}>
+                    <div className="form-grid">
+                      <div className="field">
+                        <label>Item Type</label>
+                        <select value={item.itemTypeId} onChange={(e) => updateItem(segIdx, itemIdx, { itemTypeId: Number(e.target.value) })}>
+                          <option value="">Select...</option>
+                          {itemTypes.map((it) => (
+                            <option key={it.id} value={it.id}>
+                              {it.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="field">
+                        <label>Length (cm)</label>
+                        <input type="number" value={item.lengthCm} onChange={(e) => updateItem(segIdx, itemIdx, { lengthCm: e.target.value })} />
+                      </div>
+                      <div className="field">
+                        <label>Width (cm)</label>
+                        <input type="number" value={item.widthCm} onChange={(e) => updateItem(segIdx, itemIdx, { widthCm: e.target.value })} />
+                      </div>
+                      <div className="field">
+                        <label>GSM</label>
+                        <input type="number" value={item.gsm} onChange={(e) => updateItem(segIdx, itemIdx, { gsm: e.target.value })} />
+                      </div>
+                      <div className="field">
+                        <label>Qty / Set</label>
+                        <input type="number" value={item.qtyPerSet} onChange={(e) => updateItem(segIdx, itemIdx, { qtyPerSet: e.target.value })} />
+                      </div>
+                      {seg.items.length > 1 && (
+                        <div className="field" style={{ justifyContent: 'flex-end' }}>
+                          <label>&nbsp;</label>
+                          <button className="btn small danger" onClick={() => removeItem(segIdx, itemIdx)}>
+                            Remove item
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ marginTop: 8 }}>
+                      <div className="toolbar">
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          Additional packaging charges (₹/pc)
+                        </span>
+                        <button className="btn small" onClick={() => addPackagingCharge(segIdx, itemIdx)}>
+                          + Add charge
+                        </button>
+                      </div>
+                      {item.packagingCharges.map((charge, chargeIdx) => (
+                        <div key={chargeIdx} className="tag-row" style={{ marginTop: 4 }}>
+                          <input
+                            placeholder="Description, e.g. gift box"
+                            value={charge.description}
+                            onChange={(e) => updatePackagingCharge(segIdx, itemIdx, chargeIdx, { description: e.target.value })}
+                            style={{ flex: 1 }}
+                          />
+                          <input
+                            type="number"
+                            placeholder="Rate/pc"
+                            value={charge.ratePerPiece}
+                            onChange={(e) => updatePackagingCharge(segIdx, itemIdx, chargeIdx, { ratePerPiece: e.target.value })}
+                            style={{ width: 90 }}
+                          />
+                          <button className="btn small danger" onClick={() => removePackagingCharge(segIdx, itemIdx, chargeIdx)}>
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          <div className="tag-row" style={{ marginTop: 14 }}>
+            <button className="btn" onClick={addSegment}>
+              + Add segment (bundle in another item)
+            </button>
+          </div>
+
+          <div className="tag-row" style={{ marginTop: 14 }}>
+            <button className="btn" onClick={cancelForm}>
+              Cancel
+            </button>
+            <button className="btn primary" onClick={submitSet} disabled={!formIsValid()}>
+              {editingLineId ? 'Save set' : 'Add set'}
             </button>
           </div>
         </div>
