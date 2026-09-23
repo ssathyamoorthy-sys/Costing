@@ -46,6 +46,7 @@ export function Layout() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
+          <img src="/logo.jpg" alt="Adwaith Lakshmi Industries" className="brand-logo" />
           Terry Towel Costing
           <small>Adwaith Lakshmi Industries</small>
         </div>

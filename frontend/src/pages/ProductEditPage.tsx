@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api';
-import type { AccessoryType, ItemType, Product, RawMaterial } from '../types';
+import type { AccessoryType, Product, RawMaterial } from '../types';
 import { Alert } from '../components/Alert';
 
 interface YarnRow {
@@ -19,13 +19,11 @@ export function ProductEditPage() {
   const isNew = !id;
   const navigate = useNavigate();
 
-  const [itemTypes, setItemTypes] = useState<ItemType[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [accessoryTypes, setAccessoryTypes] = useState<AccessoryType[]>([]);
 
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
-  const [itemTypeId, setItemTypeId] = useState<number | ''>('');
   const [fields, setFields] = useState({
     weavingWastagePct: 2.5,
     weavingSizingCostPerKg: 45,
@@ -49,7 +47,6 @@ export function ProductEditPage() {
   const [warning, setWarning] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get<ItemType[]>('/item-types').then(setItemTypes);
     api.get<RawMaterial[]>('/raw-materials').then(setRawMaterials);
     api.get<AccessoryType[]>('/accessory-types').then(setAccessoryTypes);
   }, []);
@@ -59,7 +56,6 @@ export function ProductEditPage() {
     api.get<Product>(`/products/${id}`).then((p) => {
       setCode(p.code);
       setName(p.name || '');
-      setItemTypeId(p.itemTypeId);
       setFields({
         weavingWastagePct: p.weavingWastagePct * 100,
         weavingSizingCostPerKg: p.weavingSizingCostPerKg,
@@ -101,14 +97,9 @@ export function ProductEditPage() {
   async function save(force = false) {
     setError(null);
     setWarning(null);
-    if (!itemTypeId) {
-      setError('Select an item type');
-      return;
-    }
     const payload = {
       code,
       name: name || undefined,
-      itemTypeId,
       weavingWastagePct: fields.weavingWastagePct / 100,
       weavingSizingCostPerKg: fields.weavingSizingCostPerKg,
       firstVelourCharges: fields.firstVelourCharges,
@@ -162,18 +153,11 @@ export function ProductEditPage() {
             <label>Name</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Plain Dyed Dobby" />
           </div>
-          <div className="field">
-            <label>Item Type</label>
-            <select value={itemTypeId} onChange={(e) => setItemTypeId(Number(e.target.value))}>
-              <option value="">Select...</option>
-              {itemTypes.map((it) => (
-                <option key={it.id} value={it.id}>
-                  {it.name}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
+        <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
+          This quality can be used for any Item Type on a quote line (Bath Towel, Hand Towel, Bath Sheet, etc.) -
+          the merchandiser picks the Item Type when adding it to a quote.
+        </p>
       </div>
 
       <div className="panel">

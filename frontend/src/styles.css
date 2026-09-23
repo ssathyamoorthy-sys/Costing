@@ -39,6 +39,7 @@ a { color: var(--blue); }
   flex-shrink: 0;
 }
 .sidebar .brand { padding: 0 20px 20px; font-weight: 700; font-size: 15px; border-bottom: 1px solid rgba(255,255,255,0.15); margin-bottom: 12px; }
+.sidebar .brand-logo { display: block; height: 32px; margin-bottom: 10px; }
 .sidebar .brand small { display: block; font-weight: 400; opacity: 0.7; font-size: 11px; margin-top: 4px; }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
 .sidebar nav a {

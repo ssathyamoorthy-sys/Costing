@@ -16,7 +16,8 @@ interface QuoteForPdf {
   createdAt: Date;
   customer: { name: string };
   lines: {
-    product: { code: string; name: string | null; itemType: { name: string } };
+    product: { code: string; name: string | null };
+    itemType: { name: string };
     color: string;
     lengthCm: number;
     widthCm: number;
@@ -100,7 +101,7 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
       const symbol = CURRENCY_SYMBOL[currency] || '';
       drawTableRow(doc, y, [
         { text: String(i + 1), width: cols[0].width },
-        { text: line.product.itemType.name, width: cols[1].width },
+        { text: line.itemType.name, width: cols[1].width },
         { text: line.product.name || line.product.code, width: cols[2].width },
         { text: `${line.lengthCm}x${line.widthCm}`, width: cols[3].width },
         { text: String(line.gsm), width: cols[4].width },

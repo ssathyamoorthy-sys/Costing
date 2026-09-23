@@ -28,6 +28,7 @@ export function Login() {
   return (
     <div className="login-page">
       <div className="login-card">
+        <img src="/logo.jpg" alt="Adwaith Lakshmi Industries" className="login-logo" />
         <h2>Terry Towel Costing</h2>
         <p>Adwaith Lakshmi Industries Pvt. Ltd.</p>
         {error && <Alert type="error">{error}</Alert>}

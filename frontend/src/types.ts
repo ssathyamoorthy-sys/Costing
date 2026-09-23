@@ -65,8 +65,6 @@ export interface Product {
   id: number;
   code: string;
   name?: string | null;
-  itemTypeId: number;
-  itemType: ItemType;
   weavingWastagePct: number;
   weavingSizingCostPerKg: number;
   firstVelourCharges: number;

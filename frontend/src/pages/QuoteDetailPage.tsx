@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, openBinary } from '../api';
-import type { CostingBreakup, Product, ProcessingCharge, Quote, QuoteLine } from '../types';
+import type { CostingBreakup, ItemType, Product, ProcessingCharge, Quote, QuoteLine } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 
@@ -49,12 +49,13 @@ export function QuoteDetailPage() {
   const { user } = useAuth();
   const [quote, setQuote] = useState<Quote | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [itemTypes, setItemTypes] = useState<ItemType[]>([]);
   const [colors, setColors] = useState<ProcessingCharge[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
-  const [form, setForm] = useState({ productId: '', color: '', lengthCm: '', widthCm: '', gsm: '', qtyPcs: '', targetPrice: '' });
+  const [form, setForm] = useState({ productId: '', itemTypeId: '', color: '', lengthCm: '', widthCm: '', gsm: '', qtyPcs: '', targetPrice: '' });
   const [overrideForLine, setOverrideForLine] = useState<number | null>(null);
   const [overrideMaterialId, setOverrideMaterialId] = useState<number | ''>('');
   const [overridePrice, setOverridePrice] = useState('');
@@ -69,6 +70,7 @@ export function QuoteDetailPage() {
   useEffect(load, [id]);
   useEffect(() => {
     api.get<Product[]>('/products').then(setProducts);
+    api.get<ItemType[]>('/item-types').then(setItemTypes);
     api.get<ProcessingCharge[]>('/processing-charges').then(setColors);
   }, []);
 
@@ -85,6 +87,7 @@ export function QuoteDetailPage() {
     try {
       const res = await api.post<{ line: QuoteLine; warnings: string[] }>(`/quotes/${quote!.id}/lines`, {
         productId: Number(form.productId),
+        itemTypeId: Number(form.itemTypeId),
         color: form.color,
         lengthCm: Number(form.lengthCm),
         widthCm: Number(form.widthCm),
@@ -93,7 +96,7 @@ export function QuoteDetailPage() {
         targetPrice: form.targetPrice ? Number(form.targetPrice) : undefined,
       });
       setWarnings(res.warnings);
-      setForm({ productId: '', color: '', lengthCm: '', widthCm: '', gsm: '', qtyPcs: '', targetPrice: '' });
+      setForm({ productId: '', itemTypeId: '', color: '', lengthCm: '', widthCm: '', gsm: '', qtyPcs: '', targetPrice: '' });
       load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -263,13 +266,15 @@ export function QuoteDetailPage() {
           <div className="line-card" key={line.id}>
             <div className="line-head">
               <div>
-                <strong>{line.product.code}</strong> - {line.product.itemType?.name} - {line.color} - {line.lengthCm}x{line.widthCm}cm, GSM {line.gsm} - Qty {line.qtyPcs} pcs
+                <strong>{line.product.code}</strong> - {line.itemType?.name} - {line.color} - {line.lengthCm}x{line.widthCm}cm, GSM {line.gsm} - Qty {line.qtyPcs} pcs
                 {line.pieceWeightGrams && <span className="muted"> ({line.pieceWeightGrams.toFixed(0)}g/pc, {line.qtyKg?.toFixed(1)} kg total)</span>}
               </div>
               <div className="tag-row">
-                <button className="btn small" onClick={() => setExpanded((e) => ({ ...e, [line.id]: !e[line.id] }))}>
-                  {isExpanded ? 'Hide' : 'Show'} cost breakup
-                </button>
+                {isSupervisor && (
+                  <button className="btn small" onClick={() => setExpanded((e) => ({ ...e, [line.id]: !e[line.id] }))}>
+                    {isExpanded ? 'Hide' : 'Show'} cost breakup
+                  </button>
+                )}
                 {canEditLines && (
                   <button className="btn small danger" onClick={() => removeLine(line.id)}>
                     Remove
@@ -309,7 +314,7 @@ export function QuoteDetailPage() {
               </tbody>
             </table>
 
-            {isExpanded && breakup && (
+            {isSupervisor && isExpanded && breakup && (
               <div style={{ marginTop: 14 }}>
                 <table className="breakup-table">
                   <thead>
@@ -405,12 +410,23 @@ export function QuoteDetailPage() {
           <h3 style={{ marginTop: 0 }}>Add line</h3>
           <div className="form-grid">
             <div className="field">
-              <label>Product</label>
+              <label>Product (quality)</label>
               <select value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })}>
                 <option value="">Select...</option>
                 {products.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.code} - {p.itemType?.name}
+                    {p.code}{p.name ? ` - ${p.name}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Item Type</label>
+              <select value={form.itemTypeId} onChange={(e) => setForm({ ...form, itemTypeId: e.target.value })}>
+                <option value="">Select...</option>
+                {itemTypes.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    {it.name}
                   </option>
                 ))}
               </select>
@@ -449,7 +465,7 @@ export function QuoteDetailPage() {
             <button
               className="btn primary"
               onClick={addLine}
-              disabled={!form.productId || !form.color || !form.lengthCm || !form.widthCm || !form.gsm || !form.qtyPcs}
+              disabled={!form.productId || !form.itemTypeId || !form.color || !form.lengthCm || !form.widthCm || !form.gsm || !form.qtyPcs}
             >
               Add line
             </button>

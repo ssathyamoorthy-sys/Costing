@@ -14,7 +14,6 @@ productsRouter.use(requireAuth);
 productsRouter.get('/', async (_req, res) => {
   const products = await prisma.product.findMany({
     include: {
-      itemType: true,
       yarnComponents: { include: { rawMaterial: true } },
       accessories: { include: { accessoryType: true } },
     },
@@ -27,14 +26,13 @@ productsRouter.get('/', async (_req, res) => {
 // otherwise Express matches "export.xlsx" as the :id param.
 productsRouter.get('/export.xlsx', requireRole('SUPERVISOR', 'ADMIN'), async (_req, res) => {
   const products = await prisma.product.findMany({
-    include: { itemType: true, yarnComponents: { include: { rawMaterial: true } } },
+    include: { yarnComponents: { include: { rawMaterial: true } } },
     orderBy: { code: 'asc' },
   });
 
   const productRows = products.map((p) => ({
     code: p.code,
     name: p.name ?? '',
-    itemType: p.itemType.name,
     weavingWastagePct: p.weavingWastagePct * 100,
     weavingSizingCostPerKg: p.weavingSizingCostPerKg,
     firstVelourCharges: p.firstVelourCharges,
@@ -61,7 +59,6 @@ productsRouter.get('/export.xlsx', requireRole('SUPERVISOR', 'ADMIN'), async (_r
       columns: [
         { header: 'code', key: 'code' },
         { header: 'name', key: 'name', width: 26 },
-        { header: 'itemType', key: 'itemType', width: 16 },
         { header: 'weavingWastagePct', key: 'weavingWastagePct', width: 16 },
         { header: 'weavingSizingCostPerKg', key: 'weavingSizingCostPerKg', width: 20 },
         { header: 'firstVelourCharges', key: 'firstVelourCharges', width: 16 },
@@ -98,8 +95,6 @@ productsRouter.post('/import', requireRole('SUPERVISOR', 'ADMIN'), upload.single
     const productRows = await parseWorkbookSheet(req.file.buffer, 'Products');
     const yarnRows = await parseWorkbookSheet(req.file.buffer, 'YarnComponents');
 
-    const itemTypes = await prisma.itemType.findMany();
-    const itemTypeByName = new Map(itemTypes.map((it) => [it.name.toLowerCase(), it]));
     const rawMaterials = await prisma.rawMaterial.findMany();
     const rawMaterialByCode = new Map(rawMaterials.map((m) => [m.code.toLowerCase(), m]));
 
@@ -121,8 +116,6 @@ productsRouter.post('/import', requireRole('SUPERVISOR', 'ADMIN'), upload.single
     for (const row of productRows) {
       const code = row.code?.trim();
       if (!code) continue;
-      const itemType = itemTypeByName.get((row.itemType || '').trim().toLowerCase());
-      if (!itemType) throw new Error(`Product "${code}": item type "${row.itemType}" not found`);
 
       const yarnComponents = yarnByProductCode.get(code) ?? [];
       if (yarnComponents.length > 0) {
@@ -132,7 +125,6 @@ productsRouter.post('/import', requireRole('SUPERVISOR', 'ADMIN'), upload.single
 
       const data = {
         name: row.name || undefined,
-        itemTypeId: itemType.id,
         weavingWastagePct: Number(row.weavingWastagePct || 0) / 100,
         weavingSizingCostPerKg: Number(row.weavingSizingCostPerKg || 0),
         firstVelourCharges: Number(row.firstVelourCharges || 0),
@@ -172,7 +164,6 @@ productsRouter.get('/:id', async (req, res) => {
   const product = await prisma.product.findUnique({
     where: { id: Number(req.params.id) },
     include: {
-      itemType: true,
       yarnComponents: { include: { rawMaterial: true } },
       accessories: { include: { accessoryType: true } },
     },
@@ -190,7 +181,6 @@ const yarnComponentSchema = z.object({
 const productSchema = z.object({
   code: z.string().min(1),
   name: z.string().optional(),
-  itemTypeId: z.number().int().positive(),
   weavingWastagePct: z.number().min(0).max(1),
   weavingSizingCostPerKg: z.number().nonnegative(),
   firstVelourCharges: z.number().nonnegative(),

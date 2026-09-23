@@ -11,8 +11,20 @@ import type { CostingBreakup } from '../costing/engine';
 export const quotesRouter = Router();
 quotesRouter.use(requireAuth);
 
+// Merchandisers see only the final rates, never the underlying cost build-up (yarn cost,
+// weaving/velour/processing charges, margin, etc.) - those stay Supervisor/Admin-only.
+function sanitizeLineForRole<T extends { costBreakupJson: string | null }>(line: T, role: string): T {
+  if (role === 'SUPERVISOR' || role === 'ADMIN') return line;
+  if (!line.costBreakupJson) return line;
+  const full: CostingBreakup = JSON.parse(line.costBreakupJson);
+  return { ...line, costBreakupJson: JSON.stringify({ ratePerKg: full.ratePerKg, ratePerPiece: full.ratePerPiece }) };
+}
+function sanitizeLinesForRole<T extends { costBreakupJson: string | null }>(lines: T[], role: string): T[] {
+  return lines.map((l) => sanitizeLineForRole(l, role));
+}
+
 const lineFull = {
-  product: { include: { itemType: true, yarnComponents: { include: { rawMaterial: true } }, accessories: { include: { accessoryType: true } } } },
+  product: { include: { yarnComponents: { include: { rawMaterial: true } }, accessories: { include: { accessoryType: true } } } },
   itemType: true,
   accessoryOverrides: { include: { accessoryType: true } },
   materialOverrides: { include: { rawMaterial: true } },
@@ -25,7 +37,7 @@ quotesRouter.get('/', async (req, res) => {
     include: { customer: true, createdBy: { select: { name: true } }, lines: true },
     orderBy: { createdAt: 'desc' },
   });
-  res.json(quotes);
+  res.json(quotes.map((q) => ({ ...q, lines: sanitizeLinesForRole(q.lines, req.user!.role) })));
 });
 
 quotesRouter.get('/:id', async (req, res) => {
@@ -34,7 +46,7 @@ quotesRouter.get('/:id', async (req, res) => {
     include: { customer: true, createdBy: { select: { name: true } }, approvedBy: { select: { name: true } }, lines: { include: lineFull } },
   });
   if (!quote) return res.status(404).json({ error: 'Not found' });
-  res.json(quote);
+  res.json({ ...quote, lines: sanitizeLinesForRole(quote.lines, req.user!.role) });
 });
 
 quotesRouter.get('/:id/xlsx', async (req, res) => {
@@ -137,6 +149,7 @@ quotesRouter.post('/', requireRole('MERCHANDISER', 'ADMIN'), async (req, res) =>
 
 const lineSchema = z.object({
   productId: z.number().int().positive(),
+  itemTypeId: z.number().int().positive(),
   color: z.string().min(1),
   lengthCm: z.number().positive(),
   widthCm: z.number().positive(),
@@ -177,6 +190,7 @@ quotesRouter.post('/:id/lines', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN
   try {
     const { breakup, warnings } = await computeQuoteLine({
       productId: parsed.data.productId,
+      itemTypeId: parsed.data.itemTypeId,
       customerId: check.quote.customerId,
       color: parsed.data.color,
       lengthCm: parsed.data.lengthCm,
@@ -190,7 +204,7 @@ quotesRouter.post('/:id/lines', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN
       data: {
         quoteId,
         productId: parsed.data.productId,
-        itemTypeId: product.itemTypeId,
+        itemTypeId: parsed.data.itemTypeId,
         color: parsed.data.color,
         lengthCm: parsed.data.lengthCm,
         widthCm: parsed.data.widthCm,
@@ -215,7 +229,7 @@ quotesRouter.post('/:id/lines', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN
       include: lineFull,
     });
 
-    res.status(201).json({ line, warnings });
+    res.status(201).json({ line: sanitizeLineForRole(line, req.user!.role), warnings });
   } catch (err: any) {
     res.status(422).json({ error: err.message });
   }
@@ -236,6 +250,7 @@ quotesRouter.put('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISOR',
 
   const merged = {
     productId: parsed.data.productId ?? existing.productId,
+    itemTypeId: parsed.data.itemTypeId ?? existing.itemTypeId,
     color: parsed.data.color ?? existing.color,
     lengthCm: parsed.data.lengthCm ?? existing.lengthCm,
     widthCm: parsed.data.widthCm ?? existing.widthCm,
@@ -258,13 +273,10 @@ quotesRouter.put('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISOR',
       quoteLineId: lineId,
     });
 
-    const product = await prisma.product.findUnique({ where: { id: merged.productId } });
-
     const line = await prisma.quoteLine.update({
       where: { id: lineId },
       data: {
         ...merged,
-        itemTypeId: product!.itemTypeId,
         targetPrice: parsed.data.targetPrice ?? existing.targetPrice,
         pieceWeightGrams: breakup.pieceWeightGrams,
         qtyKg: breakup.qtyKg,
@@ -281,7 +293,7 @@ quotesRouter.put('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISOR',
       include: lineFull,
     });
 
-    res.json({ line, warnings });
+    res.json({ line: sanitizeLineForRole(line, req.user!.role), warnings });
   } catch (err: any) {
     res.status(422).json({ error: err.message });
   }
@@ -340,6 +352,7 @@ quotesRouter.post('/:id/lines/:lineId/material-override', requireRole('SUPERVISO
   // Recompute the line with the new override applied
   const { breakup, warnings } = await computeQuoteLine({
     productId: line.productId,
+    itemTypeId: line.itemTypeId,
     customerId: line.quote.customerId,
     color: line.color,
     lengthCm: line.lengthCm,

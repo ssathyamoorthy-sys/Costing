@@ -5,6 +5,7 @@ import { computeCosting, type CostingBreakup } from './engine';
 
 export interface LineInputArgs {
   productId: number;
+  itemTypeId: number;
   customerId: number;
   color: string;
   lengthCm: number;
@@ -26,12 +27,14 @@ export async function computeQuoteLine(args: LineInputArgs): Promise<LineComputa
   const product = await prisma.product.findUnique({
     where: { id: args.productId },
     include: {
-      itemType: true,
       yarnComponents: { include: { rawMaterial: true } },
       accessories: { include: { accessoryType: true } },
     },
   });
   if (!product) throw new Error(`Product ${args.productId} not found`);
+
+  const itemType = await prisma.itemType.findUnique({ where: { id: args.itemTypeId } });
+  if (!itemType) throw new Error(`Item type ${args.itemTypeId} not found`);
 
   const customer = await prisma.customer.findUnique({ where: { id: args.customerId } });
   if (!customer) throw new Error(`Customer ${args.customerId} not found`);
@@ -109,8 +112,8 @@ export async function computeQuoteLine(args: LineInputArgs): Promise<LineComputa
     rejectionPct: product.rejectionPct,
     yarnComponents,
     processingChargeRatePerKg: processingCharge.ratePerKg,
-    stitchingCostPerKg: product.itemType.stitchingCostPerKg,
-    packingCostPerKg: product.itemType.packingCostPerKg,
+    stitchingCostPerKg: itemType.stitchingCostPerKg,
+    packingCostPerKg: itemType.packingCostPerKg,
     accessories,
     freightExportPerKg,
     wcInterestPct: customer.wcInterestPct,

@@ -90,7 +90,6 @@ async function main() {
     {
       code: 'PDD',
       name: 'Plain Dyed Dobby',
-      itemType: 'Bath Towel',
       weavingWastagePct: 0.025,
       weavingSizingCostPerKg: 45,
       firstVelourCharges: 0,
@@ -111,7 +110,6 @@ async function main() {
     {
       code: 'PWD',
       name: 'Plain White Dobby',
-      itemType: 'Bath Towel',
       weavingWastagePct: 0.025,
       weavingSizingCostPerKg: 45,
       firstVelourCharges: 0,
@@ -138,7 +136,6 @@ async function main() {
       data: {
         code: def.code,
         name: def.name,
-        itemTypeId: itemTypes[def.itemType].id,
         weavingWastagePct: def.weavingWastagePct,
         weavingSizingCostPerKg: def.weavingSizingCostPerKg,
         firstVelourCharges: def.firstVelourCharges,
