@@ -407,6 +407,15 @@ export function QuoteDetailPage() {
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }
+  async function deleteQuote() {
+    if (!confirm(`Delete quote ${quote!.quoteNo}? This cannot be undone.`)) return;
+    try {
+      await api.del(`/quotes/${quote!.id}`);
+      navigate('/quotes');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
 
   async function submitOverride(segmentId: number) {
     if (!overrideMaterialId || !overridePrice) return;
@@ -485,6 +494,11 @@ export function QuoteDetailPage() {
           <button className="btn" onClick={() => navigate('/quotes')}>
             Back to list
           </button>
+          {isSupervisor && (
+            <button className="btn danger" onClick={deleteQuote}>
+              Delete quote
+            </button>
+          )}
         </div>
       </div>
 

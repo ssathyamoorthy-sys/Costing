@@ -166,6 +166,15 @@ quotesRouter.get('/:id/xlsx-detailed', requireRole('SUPERVISOR', 'ADMIN'), async
   res.end();
 });
 
+// Supervisor/Admin only: permanently remove a quote (cascades to its lines/segments/items).
+quotesRouter.delete('/:id', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const quote = await prisma.quote.findUnique({ where: { id: Number(req.params.id) } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+
+  await prisma.quote.delete({ where: { id: quote.id } });
+  res.status(204).send();
+});
+
 const createQuoteSchema = z.object({
   customerId: z.number().int().positive(),
   validityDate: z.string().optional(),
