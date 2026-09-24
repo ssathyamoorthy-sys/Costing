@@ -89,13 +89,12 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
     { header: 'GSM', key: 'gsm', width: 8 },
     { header: 'Color', key: 'color', width: 14 },
     { header: 'Qty/Set', key: 'qtyPerSet', width: 10 },
-    { header: 'Qty (Kg)/Set', key: 'qtyKg', width: 13 },
-    { header: `Rate/Kg (${currency})`, key: 'rateKg', width: 14 },
     { header: `Rate/Pc (${currency})`, key: 'ratePc', width: 14 },
   ];
 
   const rows: Record<string, unknown>[] = [];
   quote.lines.forEach((line, li) => {
+    const isSingle = line.segments.length === 1 && line.segments[0].items.length === 1;
     for (const seg of line.segments) {
       for (const item of seg.items) {
         const breakup: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
@@ -107,19 +106,21 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
           width: item.widthCm,
           gsm: item.gsm,
           color: line.color,
-          qtyPerSet: item.qtyPerSet,
-          qtyKg: item.qtyKg,
-          rateKg: breakup?.ratePerKg?.[currency] ?? '',
+          qtyPerSet: isSingle ? `${line.qtySets} pcs` : item.qtyPerSet,
           ratePc: breakup?.ratePerPiece?.[currency] ?? '',
         });
       }
     }
-    const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
-    rows.push({
-      item: `Combined rate / set (Set #${li + 1})`,
-      ratePc: setRollup?.ratePerSet?.[currency] ?? '',
-      qtyPerSet: `${line.qtySets} sets ordered`,
-    });
+    // A single-item set's own row above already is the "combined" rate - no need for a
+    // second summary row repeating the same number.
+    if (!isSingle) {
+      const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
+      rows.push({
+        item: `Combined rate / set (Set #${li + 1})`,
+        ratePc: setRollup?.ratePerSet?.[currency] ?? '',
+        qtyPerSet: `${line.qtySets} sets ordered`,
+      });
+    }
     rows.push({});
   });
 

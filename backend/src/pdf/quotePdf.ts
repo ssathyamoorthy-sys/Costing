@@ -75,13 +75,12 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   if (quote.validityDate) doc.text(`Valid until: ${quote.validityDate.toLocaleDateString()}`, 300, 126);
 
   const cols = [
-    { key: 'item', label: 'Item', width: 85 },
-    { key: 'quality', label: 'Quality', width: 55 },
-    { key: 'size', label: 'Size (cm)', width: 55 },
-    { key: 'gsm', label: 'GSM', width: 30 },
-    { key: 'qtyPerSet', label: 'Qty/Set', width: 45, align: 'right' as const },
-    { key: 'rateKg', label: `Rate/Kg (${currency})`, width: 65, align: 'right' as const },
-    { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 65, align: 'right' as const },
+    { key: 'item', label: 'Item', width: 100 },
+    { key: 'quality', label: 'Quality', width: 65 },
+    { key: 'size', label: 'Size (cm)', width: 60 },
+    { key: 'gsm', label: 'GSM', width: 35 },
+    { key: 'qtyPerSet', label: 'Qty/Set', width: 55, align: 'right' as const },
+    { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 70, align: 'right' as const },
   ];
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
 
@@ -95,6 +94,33 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   }
 
   quote.lines.forEach((line, li) => {
+    const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
+    const ratePerSet = setRollup?.ratePerSet?.[currency];
+    const isSingle = line.segments.length === 1 && line.segments[0].items.length === 1;
+
+    if (isSingle) {
+      // A plain single-product line needs no repeated table scaffolding - one line covers it.
+      const seg = line.segments[0];
+      const item = seg.items[0];
+      ensureRoom(18);
+      doc.font('Helvetica-Bold').fontSize(9).text(`Set #${li + 1}`, 40, y, { width: 30 });
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .text(
+          `${seg.product.name || seg.product.code} - ${item.itemType.name} - ${line.color} - ${item.lengthCm}x${item.widthCm}cm, GSM ${item.gsm} - Qty ${line.qtySets.toLocaleString()} pcs`,
+          72,
+          y,
+          { width: 340 },
+        );
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(9)
+        .text(ratePerSet != null ? `${symbol}${ratePerSet.toFixed(2)} / pc` : '-', 415, y, { width: tableWidth - 375, align: 'right' });
+      y += 20;
+      return;
+    }
+
     ensureRoom(60);
     doc
       .font('Helvetica-Bold')
@@ -116,7 +142,6 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
       for (const item of seg.items) {
         ensureRoom(16);
         const breakup: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
-        const rateKg = breakup?.ratePerKg?.[currency];
         const ratePc = breakup?.ratePerPiece?.[currency];
         drawTableRow(doc, y, [
           { text: item.itemType.name, width: cols[0].width },
@@ -124,15 +149,12 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
           { text: `${item.lengthCm}x${item.widthCm}`, width: cols[2].width },
           { text: String(item.gsm), width: cols[3].width },
           { text: item.qtyPerSet.toLocaleString(), width: cols[4].width, align: 'right' },
-          { text: rateKg != null ? `${symbol}${rateKg.toFixed(2)}` : '-', width: cols[5].width, align: 'right' },
-          { text: ratePc != null ? `${symbol}${ratePc.toFixed(2)}` : '-', width: cols[6].width, align: 'right' },
+          { text: ratePc != null ? `${symbol}${ratePc.toFixed(2)}` : '-', width: cols[5].width, align: 'right' },
         ]);
         y += 16;
       }
     }
 
-    const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
-    const ratePerSet = setRollup?.ratePerSet?.[currency];
     ensureRoom(20);
     y += 4;
     doc

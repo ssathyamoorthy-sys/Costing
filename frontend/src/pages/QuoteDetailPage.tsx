@@ -529,17 +529,185 @@ export function QuoteDetailPage() {
         const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
         const ratePerSet = setRollup?.ratePerSet?.[currency];
         const isExpanded = expanded[line.id];
+        const isSingle = line.segments.length === 1 && line.segments[0].items.length === 1;
+        const singleSeg = isSingle ? line.segments[0] : null;
+        const singleItem = isSingle ? singleSeg!.items[0] : null;
+        const singleLabel = singleSeg?.product?.name || singleSeg?.product?.code || '';
+        const showDetailsButton = !isSingle || isSupervisor;
+
+        function segmentDetail(seg: (typeof line.segments)[number]) {
+          const segLabel = seg.product?.name || seg.product?.code || `Product ${seg.productId}`;
+          return (
+            <div key={seg.id} style={{ marginBottom: 18, paddingBottom: 14, borderBottom: '1px solid var(--border)' }}>
+              {!isSingle && (
+                <h4 style={{ margin: '0 0 8px' }}>
+                  Segment: {seg.product?.code} - {segLabel}
+                </h4>
+              )}
+
+              {!isSingle && (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Size (cm)</th>
+                      <th className="right">GSM</th>
+                      <th className="right">Qty/Set</th>
+                      <th className="right">Rate/Pc</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {seg.items.map((item) => {
+                      const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
+                      return (
+                        <Fragment key={item.id}>
+                          <tr>
+                            <td>{item.itemType?.name}</td>
+                            <td>
+                              {item.lengthCm}x{item.widthCm}
+                            </td>
+                            <td className="right mono">{item.gsm}</td>
+                            <td className="right mono">{item.qtyPerSet}</td>
+                            <td className="right mono">{b?.ratePerPiece?.[currency] != null ? `${symbol}${b.ratePerPiece[currency].toFixed(4)}` : '-'}</td>
+                          </tr>
+                          {item.packagingCharges.length > 0 && (
+                            <tr>
+                              <td colSpan={5} className="muted" style={{ fontSize: 12 }}>
+                                + Packaging: {item.packagingCharges.map((p) => `${p.description} (₹${p.ratePerPiece}/pc)`).join(', ')}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+
+              {isSupervisor && (
+                <>
+                  {seg.items.map((item) => {
+                    const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
+                    if (!b || !('yarnCostPerKg' in b)) return null;
+                    return (
+                      <table className="breakup-table" key={`bk-${item.id}`} style={{ marginTop: 8 }}>
+                        <thead>
+                          <tr>
+                            <th>{item.itemType?.name} - cost stack (per kg, INR)</th>
+                            <th>Value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {breakupRows.map((r) => (
+                            <tr key={r.key}>
+                              <td>{r.label}</td>
+                              <td className="mono">₹{Number(b[r.key]).toFixed(4)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    );
+                  })}
+
+                  <div style={{ marginTop: 10 }}>
+                    <h4 style={{ margin: '0 0 8px' }}>Yarn recipe (raw material price used)</h4>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Slot</th>
+                          <th>Material</th>
+                          <th className="right">Mixing %</th>
+                          <th className="right">Override</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {seg.yarnComponents.map((c) => {
+                          const ov = seg.materialOverrides?.find((o) => o.rawMaterialId === c.rawMaterialId);
+                          return (
+                            <tr key={c.id}>
+                              <td>{c.slot}</td>
+                              <td>{c.rawMaterial?.code}</td>
+                              <td className="right mono">{c.mixingPct}</td>
+                              <td className="right mono">{ov ? `₹${ov.overridePricePerKg} (${ov.reason || 'override'})` : '-'}</td>
+                              <td className="right">
+                                <button
+                                  className="btn small"
+                                  onClick={() => {
+                                    setOverrideForSegment(seg.id!);
+                                    setOverrideMaterialId(c.rawMaterialId);
+                                    setOverridePrice(String(ov?.overridePricePerKg ?? ''));
+                                  }}
+                                >
+                                  Override price
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+
+                    {overrideForSegment === seg.id && (
+                      <div className="panel" style={{ marginTop: 10, background: 'var(--blue-light)' }}>
+                        <div className="form-grid">
+                          <div className="field">
+                            <label>Override price / kg (₹)</label>
+                            <input type="number" value={overridePrice} onChange={(e) => setOverridePrice(e.target.value)} />
+                          </div>
+                          <div className="field">
+                            <label>Reason (notified to Purchase)</label>
+                            <input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="e.g. bulk deal for this order" />
+                          </div>
+                        </div>
+                        <div className="modal-actions">
+                          <button className="btn" onClick={() => setOverrideForSegment(null)}>
+                            Cancel
+                          </button>
+                          <button className="btn primary" onClick={() => submitOverride(seg.id!)}>
+                            Apply override
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        }
+
         return (
           <div className="line-card" key={line.id}>
             <div className="line-head">
               <div>
-                <strong>Set #{lineIdx + 1}</strong> - Color: {line.color} - {line.qtySets.toLocaleString()} set(s) ordered
-                {line.segments.length > 1 && <span className="muted"> ({line.segments.length} segments, bundled)</span>}
+                <strong>Set #{lineIdx + 1}</strong>
+                {isSingle ? (
+                  <>
+                    {' '}
+                    - {singleSeg!.product?.code}
+                    {singleLabel ? ` (${singleLabel})` : ''} - {singleItem!.itemType?.name} - {line.color} - {singleItem!.lengthCm}x{singleItem!.widthCm}cm, GSM{' '}
+                    {singleItem!.gsm} - Qty {line.qtySets.toLocaleString()} pcs
+                  </>
+                ) : (
+                  <>
+                    {' '}
+                    - Color: {line.color} - {line.qtySets.toLocaleString()} set(s) ordered
+                    <span className="muted"> ({line.segments.length} segments, bundled)</span>
+                  </>
+                )}
+                {isSingle && singleItem!.packagingCharges.length > 0 && (
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    + Packaging: {singleItem!.packagingCharges.map((p) => `${p.description} (₹${p.ratePerPiece}/pc)`).join(', ')}
+                  </div>
+                )}
               </div>
               <div className="tag-row">
-                <button className="btn small" onClick={() => setExpanded((e) => ({ ...e, [line.id]: !e[line.id] }))}>
-                  {isExpanded ? 'Hide' : 'Show'} details
-                </button>
+                {showDetailsButton && (
+                  <button className="btn small" onClick={() => setExpanded((e) => ({ ...e, [line.id]: !e[line.id] }))}>
+                    {isExpanded ? 'Hide' : 'Show'} details
+                  </button>
+                )}
                 {canEditLines && (
                   <>
                     <button className="btn small" onClick={() => saveLineAsTemplate(line.id)} title="Save this set's recipe for repeat orders from this customer">
@@ -565,159 +733,17 @@ export function QuoteDetailPage() {
               </thead>
               <tbody>
                 <tr>
-                  <td>Combined price / set</td>
+                  <td>{isSingle ? 'Rate / Piece' : 'Combined price / set'}</td>
                   <td className="right mono">{ratePerSet != null ? `${symbol}${ratePerSet.toFixed(4)}` : '-'}</td>
                 </tr>
                 <tr>
-                  <td>Total for {line.qtySets} set(s)</td>
+                  <td>Total for {line.qtySets.toLocaleString()} {isSingle ? 'pcs' : 'set(s)'}</td>
                   <td className="right mono">{ratePerSet != null ? `${symbol}${(ratePerSet * line.qtySets).toFixed(2)}` : '-'}</td>
                 </tr>
               </tbody>
             </table>
 
-            {isExpanded && (
-              <div style={{ marginTop: 14 }}>
-                {line.segments.map((seg) => {
-                  const segLabel = seg.product?.name || seg.product?.code || `Product ${seg.productId}`;
-                  return (
-                    <div key={seg.id} style={{ marginBottom: 18, paddingBottom: 14, borderBottom: '1px solid var(--border)' }}>
-                      <h4 style={{ margin: '0 0 8px' }}>
-                        Segment: {seg.product?.code} - {segLabel}
-                      </h4>
-
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Item</th>
-                            <th>Size (cm)</th>
-                            <th className="right">GSM</th>
-                            <th className="right">Qty/Set</th>
-                            <th className="right">Rate/Kg</th>
-                            <th className="right">Rate/Pc</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {seg.items.map((item) => {
-                            const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
-                            return (
-                              <Fragment key={item.id}>
-                                <tr>
-                                  <td>{item.itemType?.name}</td>
-                                  <td>
-                                    {item.lengthCm}x{item.widthCm}
-                                  </td>
-                                  <td className="right mono">{item.gsm}</td>
-                                  <td className="right mono">{item.qtyPerSet}</td>
-                                  <td className="right mono">{b?.ratePerKg?.[currency] != null ? `${symbol}${b.ratePerKg[currency].toFixed(4)}` : '-'}</td>
-                                  <td className="right mono">{b?.ratePerPiece?.[currency] != null ? `${symbol}${b.ratePerPiece[currency].toFixed(4)}` : '-'}</td>
-                                </tr>
-                                {item.packagingCharges.length > 0 && (
-                                  <tr>
-                                    <td colSpan={6} className="muted" style={{ fontSize: 12 }}>
-                                      + Packaging: {item.packagingCharges.map((p) => `${p.description} (₹${p.ratePerPiece}/pc)`).join(', ')}
-                                    </td>
-                                  </tr>
-                                )}
-                              </Fragment>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-
-                      {isSupervisor && (
-                        <>
-                          {seg.items.map((item) => {
-                            const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
-                            if (!b || !('yarnCostPerKg' in b)) return null;
-                            return (
-                              <table className="breakup-table" key={`bk-${item.id}`} style={{ marginTop: 8 }}>
-                                <thead>
-                                  <tr>
-                                    <th>{item.itemType?.name} - cost stack (per kg, INR)</th>
-                                    <th>Value</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {breakupRows.map((r) => (
-                                    <tr key={r.key}>
-                                      <td>{r.label}</td>
-                                      <td className="mono">₹{Number(b[r.key]).toFixed(4)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            );
-                          })}
-
-                          <div style={{ marginTop: 10 }}>
-                            <h4 style={{ margin: '0 0 8px' }}>Yarn recipe (raw material price used)</h4>
-                            <table>
-                              <thead>
-                                <tr>
-                                  <th>Slot</th>
-                                  <th>Material</th>
-                                  <th className="right">Mixing %</th>
-                                  <th className="right">Override</th>
-                                  <th></th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {seg.yarnComponents.map((c) => {
-                                  const ov = seg.materialOverrides?.find((o) => o.rawMaterialId === c.rawMaterialId);
-                                  return (
-                                    <tr key={c.id}>
-                                      <td>{c.slot}</td>
-                                      <td>{c.rawMaterial?.code}</td>
-                                      <td className="right mono">{c.mixingPct}</td>
-                                      <td className="right mono">{ov ? `₹${ov.overridePricePerKg} (${ov.reason || 'override'})` : '-'}</td>
-                                      <td className="right">
-                                        <button
-                                          className="btn small"
-                                          onClick={() => {
-                                            setOverrideForSegment(seg.id!);
-                                            setOverrideMaterialId(c.rawMaterialId);
-                                            setOverridePrice(String(ov?.overridePricePerKg ?? ''));
-                                          }}
-                                        >
-                                          Override price
-                                        </button>
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-
-                            {overrideForSegment === seg.id && (
-                              <div className="panel" style={{ marginTop: 10, background: 'var(--blue-light)' }}>
-                                <div className="form-grid">
-                                  <div className="field">
-                                    <label>Override price / kg (₹)</label>
-                                    <input type="number" value={overridePrice} onChange={(e) => setOverridePrice(e.target.value)} />
-                                  </div>
-                                  <div className="field">
-                                    <label>Reason (notified to Purchase)</label>
-                                    <input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="e.g. bulk deal for this order" />
-                                  </div>
-                                </div>
-                                <div className="modal-actions">
-                                  <button className="btn" onClick={() => setOverrideForSegment(null)}>
-                                    Cancel
-                                  </button>
-                                  <button className="btn primary" onClick={() => submitOverride(seg.id!)}>
-                                    Apply override
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            {isExpanded && <div style={{ marginTop: 14 }}>{line.segments.map(segmentDetail)}</div>}
           </div>
         );
       })}
