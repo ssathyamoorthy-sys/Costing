@@ -206,6 +206,10 @@ export interface Quote {
   paymentTerms?: string | null;
   freightTerms?: string | null;
   currency: Currency;
+  marginPctOverride?: number | null;
+  commissionPctOverride?: number | null;
+  wcInterestPctOverride?: number | null;
+  lcInterestPctOverride?: number | null;
   version: number;
   createdAt: string;
   lines: QuoteLine[];

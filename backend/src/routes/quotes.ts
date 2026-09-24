@@ -35,6 +35,60 @@ function sanitizeLinesForRole<T extends { segments: { items: { costBreakupJson: 
   return lines.map((l) => sanitizeLineForRole(l, role));
 }
 
+// Recomputes every item in a quote line (Set) off current rates/overrides and writes the
+// fresh cost breakup back to the DB. Shared by anything that changes a pricing input for
+// an existing line: material overrides, and quote-level margin/commission/interest overrides.
+async function recomputeLine(quoteLineId: number) {
+  const line = await prisma.quoteLine.findUnique({ where: { id: quoteLineId } });
+  if (!line) return;
+
+  const allSegments = await prisma.quoteLineSegment.findMany({
+    where: { quoteLineId },
+    orderBy: { sortOrder: 'asc' },
+    include: { yarnComponents: true, items: { include: { accessoryOverrides: true, packagingCharges: true } } },
+  });
+
+  const result = await computeSet({
+    quoteId: line.quoteId,
+    color: line.color,
+    quoteLineId,
+    segments: allSegments.map((s) => ({
+      productId: s.productId,
+      yarnComponents: s.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })),
+      items: s.items.map((it) => ({
+        itemTypeId: it.itemTypeId,
+        lengthCm: it.lengthCm,
+        widthCm: it.widthCm,
+        gsm: it.gsm,
+        qtyPerSet: it.qtyPerSet,
+        accessoryOverrides: it.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })),
+        packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })),
+      })),
+    })),
+  });
+
+  for (let si = 0; si < allSegments.length; si++) {
+    for (let ii = 0; ii < allSegments[si].items.length; ii++) {
+      const computedItem = result.segments[si].items[ii];
+      await prisma.quoteLineSegmentItem.update({
+        where: { id: allSegments[si].items[ii].id },
+        data: {
+          pieceWeightGrams: computedItem.pieceWeightGrams,
+          qtyKg: computedItem.qtyKg,
+          costBreakupJson: JSON.stringify(computedItem.breakup),
+        },
+      });
+    }
+  }
+
+  await prisma.quoteLine.update({
+    where: { id: quoteLineId },
+    data: { costBreakupJson: JSON.stringify({ ratePerSet: result.ratePerSet }) },
+  });
+
+  return result.warnings;
+}
+
 const lineFull = {
   segments: {
     orderBy: { sortOrder: 'asc' as const },
@@ -468,52 +522,45 @@ quotesRouter.post('/:id/segments/:segmentId/material-override', requireRole('SUP
   // Recompute the whole Set - the override affects every item in this segment, and the
   // combined set rate depends on every segment.
   const quoteLineId = segment.quoteLine.id;
-  const allSegments = await prisma.quoteLineSegment.findMany({
-    where: { quoteLineId },
-    orderBy: { sortOrder: 'asc' },
-    include: { yarnComponents: true, items: { include: { accessoryOverrides: true, packagingCharges: true } } },
-  });
+  const warnings = await recomputeLine(quoteLineId);
 
-  const result = await computeSet({
-    quoteId: segment.quoteLine.quoteId,
-    color: segment.quoteLine.color,
-    quoteLineId,
-    segments: allSegments.map((s) => ({
-      productId: s.productId,
-      yarnComponents: s.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })),
-      items: s.items.map((it) => ({
-        itemTypeId: it.itemTypeId,
-        lengthCm: it.lengthCm,
-        widthCm: it.widthCm,
-        gsm: it.gsm,
-        qtyPerSet: it.qtyPerSet,
-        accessoryOverrides: it.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })),
-        packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })),
-      })),
-    })),
-  });
+  const updatedLine = await prisma.quoteLine.findUniqueOrThrow({ where: { id: quoteLineId }, include: lineFull });
 
-  for (let si = 0; si < allSegments.length; si++) {
-    for (let ii = 0; ii < allSegments[si].items.length; ii++) {
-      const computedItem = result.segments[si].items[ii];
-      await prisma.quoteLineSegmentItem.update({
-        where: { id: allSegments[si].items[ii].id },
-        data: {
-          pieceWeightGrams: computedItem.pieceWeightGrams,
-          qtyKg: computedItem.qtyKg,
-          costBreakupJson: JSON.stringify(computedItem.breakup),
-        },
-      });
-    }
+  res.json({ line: sanitizeLineForRole(updatedLine, req.user!.role), warnings });
+});
+
+// Supervisor: override the customer's margin/commission/WC-interest/LC-interest terms for
+// this quote only (never touches the Customer record). Passing null for a field clears that
+// override back to the customer's standard value. Every line in the quote is recosted.
+const termsOverrideSchema = z.object({
+  marginPctOverride: z.number().nullable().optional(),
+  commissionPctOverride: z.number().nullable().optional(),
+  wcInterestPctOverride: z.number().nullable().optional(),
+  lcInterestPctOverride: z.number().nullable().optional(),
+});
+
+quotesRouter.post('/:id/terms-override', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const quoteId = Number(req.params.id);
+  const parsed = termsOverrideSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId }, include: { lines: true } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+
+  await prisma.quote.update({ where: { id: quoteId }, data: parsed.data });
+
+  const warnings: string[] = [];
+  for (const line of quote.lines) {
+    const lineWarnings = await recomputeLine(line.id);
+    if (lineWarnings) warnings.push(...lineWarnings);
   }
 
-  const updatedLine = await prisma.quoteLine.update({
-    where: { id: quoteLineId },
-    data: { costBreakupJson: JSON.stringify({ ratePerSet: result.ratePerSet }) },
-    include: lineFull,
+  const updated = await prisma.quote.findUniqueOrThrow({
+    where: { id: quoteId },
+    include: { customer: true, createdBy: { select: { name: true } }, approvedBy: { select: { name: true } }, lines: { include: lineFull } },
   });
 
-  res.json({ line: sanitizeLineForRole(updatedLine, req.user!.role), warnings: result.warnings });
+  res.json({ ...updated, lines: sanitizeLinesForRole(updated.lines, req.user!.role), warnings });
 });
 
 // --- Workflow ---

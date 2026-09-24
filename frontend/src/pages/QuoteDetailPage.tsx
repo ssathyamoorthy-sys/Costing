@@ -108,6 +108,9 @@ export function QuoteDetailPage() {
   const [overridePrice, setOverridePrice] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
 
+  const [showTermsEditor, setShowTermsEditor] = useState(false);
+  const [termsForm, setTermsForm] = useState({ marginPct: '', commissionPct: '', wcInterestPct: '', lcInterestPct: '' });
+
   function load() {
     api
       .get<Quote>(`/quotes/${id}`)
@@ -435,6 +438,46 @@ export function QuoteDetailPage() {
     }
   }
 
+  function openTermsEditor() {
+    setTermsForm({
+      marginPct: quote!.marginPctOverride != null ? String(quote!.marginPctOverride) : '',
+      commissionPct: quote!.commissionPctOverride != null ? String(quote!.commissionPctOverride) : '',
+      wcInterestPct: quote!.wcInterestPctOverride != null ? String(quote!.wcInterestPctOverride) : '',
+      lcInterestPct: quote!.lcInterestPctOverride != null ? String(quote!.lcInterestPctOverride) : '',
+    });
+    setShowTermsEditor(true);
+  }
+
+  async function saveTermsOverride() {
+    try {
+      await api.post(`/quotes/${quote!.id}/terms-override`, {
+        marginPctOverride: termsForm.marginPct === '' ? null : Number(termsForm.marginPct),
+        commissionPctOverride: termsForm.commissionPct === '' ? null : Number(termsForm.commissionPct),
+        wcInterestPctOverride: termsForm.wcInterestPct === '' ? null : Number(termsForm.wcInterestPct),
+        lcInterestPctOverride: termsForm.lcInterestPct === '' ? null : Number(termsForm.lcInterestPct),
+      });
+      setShowTermsEditor(false);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function clearTermsOverride() {
+    try {
+      await api.post(`/quotes/${quote!.id}/terms-override`, {
+        marginPctOverride: null,
+        commissionPctOverride: null,
+        wcInterestPctOverride: null,
+        lcInterestPctOverride: null,
+      });
+      setShowTermsEditor(false);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   function segmentMixingTotal(seg: FormSegment) {
     return seg.yarnComponents.reduce((s, r) => s + (Number(r.mixingPct) || 0), 0);
   }
@@ -538,6 +581,149 @@ export function QuoteDetailPage() {
           </div>
         </div>
       </div>
+
+      {isSupervisor && (
+        <div className="panel">
+          <div className="tag-row" style={{ justifyContent: 'space-between' }}>
+            <strong>Commercial terms for this quote</strong>
+            {!showTermsEditor && (
+              <button className="btn small" onClick={openTermsEditor}>
+                {[quote.marginPctOverride, quote.commissionPctOverride, quote.wcInterestPctOverride, quote.lcInterestPctOverride].some(
+                  (v) => v != null,
+                )
+                  ? 'Edit overrides'
+                  : 'Override terms'}
+              </button>
+            )}
+          </div>
+
+          {!showTermsEditor && (
+            <div className="form-grid" style={{ marginTop: 10 }}>
+              <div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Margin %
+                </div>
+                {quote.marginPctOverride != null ? (
+                  <>
+                    {quote.marginPctOverride}{' '}
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      (customer default {quote.customer.marginPct})
+                    </span>
+                  </>
+                ) : (
+                  quote.customer.marginPct
+                )}
+              </div>
+              <div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Commission %
+                </div>
+                {quote.commissionPctOverride != null ? (
+                  <>
+                    {quote.commissionPctOverride}{' '}
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      (customer default {quote.customer.commissionPct})
+                    </span>
+                  </>
+                ) : (
+                  quote.customer.commissionPct
+                )}
+              </div>
+              <div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  WC Interest %
+                </div>
+                {quote.wcInterestPctOverride != null ? (
+                  <>
+                    {quote.wcInterestPctOverride}{' '}
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      (customer default {quote.customer.wcInterestPct})
+                    </span>
+                  </>
+                ) : (
+                  quote.customer.wcInterestPct
+                )}
+              </div>
+              <div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  LC Interest %
+                </div>
+                {quote.lcInterestPctOverride != null ? (
+                  <>
+                    {quote.lcInterestPctOverride}{' '}
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      (customer default {quote.customer.lcInterestPct})
+                    </span>
+                  </>
+                ) : (
+                  quote.customer.lcInterestPct
+                )}
+              </div>
+            </div>
+          )}
+
+          {showTermsEditor && (
+            <div style={{ marginTop: 10 }}>
+              <div className="form-grid">
+                <div>
+                  <label>Margin % (default {quote.customer.marginPct})</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder={String(quote.customer.marginPct)}
+                    value={termsForm.marginPct}
+                    onChange={(e) => setTermsForm((f) => ({ ...f, marginPct: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label>Commission % (default {quote.customer.commissionPct})</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder={String(quote.customer.commissionPct)}
+                    value={termsForm.commissionPct}
+                    onChange={(e) => setTermsForm((f) => ({ ...f, commissionPct: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label>WC Interest % (default {quote.customer.wcInterestPct})</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder={String(quote.customer.wcInterestPct)}
+                    value={termsForm.wcInterestPct}
+                    onChange={(e) => setTermsForm((f) => ({ ...f, wcInterestPct: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label>LC Interest % (default {quote.customer.lcInterestPct})</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder={String(quote.customer.lcInterestPct)}
+                    value={termsForm.lcInterestPct}
+                    onChange={(e) => setTermsForm((f) => ({ ...f, lcInterestPct: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="tag-row" style={{ marginTop: 10 }}>
+                <button className="btn primary small" onClick={saveTermsOverride}>
+                  Save
+                </button>
+                <button className="btn small" onClick={clearTermsOverride}>
+                  Clear all overrides
+                </button>
+                <button className="btn small" onClick={() => setShowTermsEditor(false)}>
+                  Cancel
+                </button>
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                Leave a field blank to use the customer's standard value. Saving recalculates every set in this quote.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {quote.lines.map((line, lineIdx) => {
         const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;

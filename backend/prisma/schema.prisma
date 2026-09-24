@@ -185,6 +185,15 @@ model Quote {
   // Single currency for this quote, copied from the customer's currency at creation time
   // (Domestic (India) customers are always INR - enforced on the Customer record itself).
   currency      String      @default("INR")
+
+  // Supervisor-only, per-quote overrides of the customer's standard commercial terms.
+  // Null means "use the customer's master value" (the normal case); a non-null value here
+  // wins for this quote only and never changes the Customer record itself.
+  marginPctOverride     Float?
+  commissionPctOverride Float?
+  wcInterestPctOverride Float?
+  lcInterestPctOverride Float?
+
   version       Int         @default(1)
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
