@@ -4,13 +4,14 @@ export interface ColumnDef {
   header: string;
   key: string;
   width?: number;
+  numFmt?: string;
 }
 
 export function buildWorkbook(sheets: { name: string; columns: ColumnDef[]; rows: Record<string, unknown>[] }[]): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
   for (const sheet of sheets) {
     const ws = wb.addWorksheet(sheet.name);
-    ws.columns = sheet.columns.map((c) => ({ header: c.header, key: c.key, width: c.width ?? 18 }));
+    ws.columns = sheet.columns.map((c) => ({ header: c.header, key: c.key, width: c.width ?? 18, style: c.numFmt ? { numFmt: c.numFmt } : undefined }));
     ws.getRow(1).font = { bold: true };
     for (const row of sheet.rows) ws.addRow(row);
   }

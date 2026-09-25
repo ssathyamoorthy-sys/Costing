@@ -46,6 +46,16 @@ export interface AccessoryType {
   name: string;
 }
 
+export interface HsnCode {
+  id: number;
+  description: string;
+  hsCode: string;
+  uom: string;
+  dbkPct: number;
+  rosctlRodepPct: number;
+  active: boolean;
+}
+
 export interface ProductYarnComponent {
   id?: number;
   slot: string;
@@ -134,6 +144,13 @@ export interface CostingBreakup {
   qtyKg: number;
   ratePerKg: Record<string, number>;
   ratePerPiece: Record<string, number>;
+
+  hsnCode?: string | null;
+  totalIncentivePct?: number;
+  profitPerKgInr?: number;
+  dbkProfitPerKgInr?: number;
+  profitInclDbkPerKgInr?: number;
+  profitInclDbk?: Record<string, number>;
 }
 
 export interface QuoteLineSegmentYarn {
@@ -165,6 +182,8 @@ export interface QuoteLineSegmentItem {
   widthCm: number;
   gsm: number;
   qtyPerSet: number;
+  hsnCodeId?: number | null;
+  hsnCode?: HsnCode | null;
   pieceWeightGrams?: number | null;
   qtyKg?: number | null;
   costBreakupJson?: string | null;

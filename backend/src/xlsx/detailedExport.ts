@@ -78,6 +78,19 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
     cell.value = value;
     return cell.address;
   };
+  // Percentages are stored as true fractions (0.025 = 2.5%) everywhere except the yarn
+  // mixing % column, which is already a raw 0-100 number - so it gets its own format that
+  // just appends a "%" without Excel's usual x100 auto-scaling.
+  const putPct = (row: number, col: number, value: ExcelJS.CellValue) => {
+    const addr = put(row, col, value);
+    ws.getCell(row, col).numFmt = '0.00%';
+    return addr;
+  };
+  const putMoney = (row: number, col: number, value: ExcelJS.CellValue) => {
+    const addr = put(row, col, value);
+    ws.getCell(row, col).numFmt = '#,##0.0000';
+    return addr;
+  };
 
   ws.mergeCells(r, 1, r, 5);
   put(r, 1, `Set #${ctx.setNo} - ${ctx.segmentLabel} - ${ctx.itemTypeName}`);
@@ -120,19 +133,19 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   ws.getCell(r, 1).font = SECTION_FONT;
   r++;
   put(r, 1, 'Weaving wastage %');
-  const weavingWastageCell = put(r, 2, ctx.weavingWastagePct);
+  const weavingWastageCell = putPct(r, 2, ctx.weavingWastagePct);
   r++;
   put(r, 1, 'First velour loss %');
-  const firstVelourLossCell = put(r, 2, ctx.firstVelourLossPct);
+  const firstVelourLossCell = putPct(r, 2, ctx.firstVelourLossPct);
   r++;
   put(r, 1, 'Weight loss %');
-  const weightLossCell = put(r, 2, ctx.weightLossPct);
+  const weightLossCell = putPct(r, 2, ctx.weightLossPct);
   r++;
   put(r, 1, 'Second velour loss %');
-  const secondVelourLossCell = put(r, 2, ctx.secondVelourLossPct);
+  const secondVelourLossCell = putPct(r, 2, ctx.secondVelourLossPct);
   r++;
   put(r, 1, 'Rejection %');
-  const rejectionCell = put(r, 2, ctx.rejectionPct);
+  const rejectionCell = putPct(r, 2, ctx.rejectionPct);
   r += 2;
 
   // --- BOM waste-compounding multiplier chain ---
@@ -196,41 +209,43 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
     put(r, 1, y.slot);
     put(r, 2, y.overrideNote ? `${y.materialCode} (${y.overrideNote})` : y.materialCode);
     put(r, 3, y.mixingPct);
-    put(r, 4, y.pricePerKg);
-    put(r, 5, { formula: `${bomMultiplierCell}*D${r}*C${r}/100` } as any);
+    ws.getCell(r, 3).numFmt = '0.00"%"';
+    putMoney(r, 4, y.pricePerKg);
+    putMoney(r, 5, { formula: `${bomMultiplierCell}*D${r}*C${r}/100` } as any);
     r++;
   }
   const yarnLastRow = r - 1;
   put(r, 1, 'Mixing % total (should be 100)');
   put(r, 3, { formula: `SUM(C${yarnFirstRow}:C${yarnLastRow})` } as any);
+  ws.getCell(r, 3).numFmt = '0.00"%"';
   r++;
   put(r, 1, 'Yarn cost / Kg');
   ws.getCell(r, 1).font = LABEL_FONT;
-  const yarnCostCell = put(r, 5, { formula: `SUM(E${yarnFirstRow}:E${yarnLastRow})` } as any);
+  const yarnCostCell = putMoney(r, 5, { formula: `SUM(E${yarnFirstRow}:E${yarnLastRow})` } as any);
   ws.getCell(r, 5).font = LABEL_FONT;
   r += 2;
 
   // --- Remaining process-cost inputs ---
   put(r, 1, 'Weaving + sizing cost / Kg');
-  const weavingSizingCostCell = put(r, 2, ctx.weavingSizingCostPerKg);
+  const weavingSizingCostCell = putMoney(r, 2, ctx.weavingSizingCostPerKg);
   r++;
   put(r, 1, 'First velour charges / Kg');
-  const firstVelourChargesCell = put(r, 2, ctx.firstVelourCharges);
+  const firstVelourChargesCell = putMoney(r, 2, ctx.firstVelourCharges);
   r++;
   put(r, 1, 'Processing charge / Kg (color)');
-  const processingChargeCell = put(r, 2, ctx.processingChargeRatePerKg);
+  const processingChargeCell = putMoney(r, 2, ctx.processingChargeRatePerKg);
   r++;
   put(r, 1, 'Second velour charges / Kg');
-  const secondVelourChargesCell = put(r, 2, ctx.secondVelourCharges);
+  const secondVelourChargesCell = putMoney(r, 2, ctx.secondVelourCharges);
   r++;
   put(r, 1, 'Local transport / Kg');
-  const transportCell = put(r, 2, ctx.transportLocalPerKg);
+  const transportCell = putMoney(r, 2, ctx.transportLocalPerKg);
   r++;
   put(r, 1, 'Stitching cost / Kg');
-  const stitchingCostCell = put(r, 2, ctx.stitchingCostPerKg);
+  const stitchingCostCell = putMoney(r, 2, ctx.stitchingCostPerKg);
   r++;
   put(r, 1, 'Packing cost / Kg');
-  const packingCostCell = put(r, 2, ctx.packingCostPerKg);
+  const packingCostCell = putMoney(r, 2, ctx.packingCostPerKg);
   r += 2;
 
   // --- Accessories & packaging charges ---
@@ -245,21 +260,21 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   const accFirstRow = r;
   if (ctx.accessoryRows.length === 0) {
     put(r, 1, '(none)');
-    put(r, 2, 0);
+    putMoney(r, 2, 0);
     r++;
   } else {
     for (const a of ctx.accessoryRows) {
       put(r, 1, a.name);
-      put(r, 2, a.costPerPiece);
+      putMoney(r, 2, a.costPerPiece);
       r++;
     }
   }
   const accLastRow = r - 1;
   put(r, 1, 'Accessories cost / piece');
-  const accPerPieceCell = put(r, 2, { formula: `SUM(B${accFirstRow}:B${accLastRow})` } as any);
+  const accPerPieceCell = putMoney(r, 2, { formula: `SUM(B${accFirstRow}:B${accLastRow})` } as any);
   r++;
   put(r, 1, 'Accessories cost / Kg');
-  const accessoriesPerKgCell = put(r, 2, { formula: `IF(${pieceWeightCell}>0,(1000/${pieceWeightCell})*${accPerPieceCell},0)` } as any);
+  const accessoriesPerKgCell = putMoney(r, 2, { formula: `IF(${pieceWeightCell}>0,(1000/${pieceWeightCell})*${accPerPieceCell},0)` } as any);
   r += 2;
 
   // --- Cost stack ---
@@ -267,99 +282,103 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   ws.getCell(r, 1).font = SECTION_FONT;
   r++;
   put(r, 1, 'Yarn cost');
-  const f_yarn = put(r, 2, { formula: `${yarnCostCell}` } as any);
+  const f_yarn = putMoney(r, 2, { formula: `${yarnCostCell}` } as any);
   r++;
   put(r, 1, 'Weaving + sizing cost (F10)');
-  const f10 = put(r, 2, { formula: `${g9Cell}*${weavingSizingCostCell}` } as any);
+  const f10 = putMoney(r, 2, { formula: `${g9Cell}*${weavingSizingCostCell}` } as any);
   r++;
   put(r, 1, 'First velour charges (F11)');
-  const f11 = put(r, 2, { formula: `${g9Cell}*${firstVelourChargesCell}` } as any);
+  const f11 = putMoney(r, 2, { formula: `${g9Cell}*${firstVelourChargesCell}` } as any);
   r++;
   put(r, 1, 'Subtotal after weaving (F12)');
-  const f12 = put(r, 2, { formula: `${f_yarn}+${f10}+${f11}` } as any);
+  const f12 = putMoney(r, 2, { formula: `${f_yarn}+${f10}+${f11}` } as any);
   r++;
   put(r, 1, 'Processing charges - color (F14)');
-  const f14 = put(r, 2, { formula: `${g13Cell}*${processingChargeCell}` } as any);
+  const f14 = putMoney(r, 2, { formula: `${g13Cell}*${processingChargeCell}` } as any);
   r++;
   put(r, 1, 'Subtotal after processing (F15)');
-  const f15 = put(r, 2, { formula: `${f12}+${f14}` } as any);
+  const f15 = putMoney(r, 2, { formula: `${f12}+${f14}` } as any);
   r++;
   put(r, 1, 'Second velour charges (F17)');
-  const f17 = put(r, 2, { formula: `${g16Cell}*${secondVelourChargesCell}` } as any);
+  const f17 = putMoney(r, 2, { formula: `${g16Cell}*${secondVelourChargesCell}` } as any);
   r++;
   put(r, 1, 'Subtotal after second velour (F18)');
-  const f18 = put(r, 2, { formula: `${f15}+${f17}` } as any);
+  const f18 = putMoney(r, 2, { formula: `${f15}+${f17}` } as any);
   r++;
   put(r, 1, 'Local transport (F20)');
-  const f20 = put(r, 2, { formula: `${transportCell}*${g9Cell}` } as any);
+  const f20 = putMoney(r, 2, { formula: `${transportCell}*${g9Cell}` } as any);
   r++;
   put(r, 1, 'Stitching + packing + accessories (F21)');
-  const f21 = put(r, 2, { formula: `${g19Cell}*(${stitchingCostCell}+${packingCostCell}+${accessoriesPerKgCell})` } as any);
+  const f21 = putMoney(r, 2, { formula: `${g19Cell}*(${stitchingCostCell}+${packingCostCell}+${accessoriesPerKgCell})` } as any);
   r++;
   put(r, 1, 'Subtotal after stitching (F22)');
-  const f22 = put(r, 2, { formula: `${f18}+${f20}+${f21}` } as any);
+  const f22 = putMoney(r, 2, { formula: `${f18}+${f20}+${f21}` } as any);
   r += 2;
 
   // --- Freight / interest / margin / commission ---
   put(r, 1, 'W.C. Interest %');
-  const wcCell = put(r, 2, ctx.wcInterestPct);
+  const wcCell = putPct(r, 2, ctx.wcInterestPct);
   r++;
   put(r, 1, 'Export freight / Kg');
-  const freightCell = put(r, 2, ctx.freightExportPerKg);
+  const freightCell = putMoney(r, 2, ctx.freightExportPerKg);
   r++;
   put(r, 1, 'LC Interest %');
-  const lcCell = put(r, 2, ctx.lcInterestPct);
+  const lcCell = putPct(r, 2, ctx.lcInterestPct);
   r++;
   put(r, 1, 'Margin % (negative adds margin)');
-  const marginCell = put(r, 2, ctx.marginPct);
+  const marginCell = putPct(r, 2, ctx.marginPct);
   r++;
   put(r, 1, 'Commission %');
-  const commissionCell = put(r, 2, ctx.commissionPct);
+  const commissionCell = putPct(r, 2, ctx.commissionPct);
   r += 1;
 
   put(r, 1, 'W.C. Interest, grossed up (F25)');
-  const f25 = put(r, 2, { formula: `${f22}/(1-${wcCell})-${f22}` } as any);
+  const f25 = putMoney(r, 2, { formula: `${f22}/(1-${wcCell})-${f22}` } as any);
   r++;
   put(r, 1, 'Export freight (F26)');
-  const f26 = put(r, 2, { formula: `${freightCell}*${g23Cell}` } as any);
+  const f26 = putMoney(r, 2, { formula: `${freightCell}*${g23Cell}` } as any);
   r++;
   put(r, 1, 'Subtotal after freight (F27)');
-  const f27 = put(r, 2, { formula: `${f22}+${f25}+${f26}` } as any);
+  const f27 = putMoney(r, 2, { formula: `${f22}+${f25}+${f26}` } as any);
   r++;
   put(r, 1, 'LC Interest, grossed up (F28)');
-  const f28 = put(r, 2, { formula: `${f27}/(1-${lcCell})-${f27}` } as any);
+  const f28 = putMoney(r, 2, { formula: `${f27}/(1-${lcCell})-${f27}` } as any);
   r++;
   put(r, 1, 'Subtotal before margin (F29)');
-  const f29 = put(r, 2, { formula: `${f27}+${f28}` } as any);
+  const f29 = putMoney(r, 2, { formula: `${f27}+${f28}` } as any);
   r++;
   put(r, 1, 'Margin (F30)');
-  const f30 = put(r, 2, { formula: `${f29}*${marginCell}` } as any);
+  const f30 = putMoney(r, 2, { formula: `${f29}*${marginCell}` } as any);
   r++;
   put(r, 1, 'Subtotal after margin (F31)');
-  const f31 = put(r, 2, { formula: `${f29}+${f30}` } as any);
+  const f31 = putMoney(r, 2, { formula: `${f29}+${f30}` } as any);
   r++;
   put(r, 1, 'Commission, grossed up (F32)');
-  put(r, 2, { formula: `${f31}/(1-${commissionCell})-${f31}` } as any);
+  putMoney(r, 2, { formula: `${f31}/(1-${commissionCell})-${f31}` } as any);
   r += 2;
 
   put(r, 1, 'FINAL PRICE / KG (INR)');
   ws.getCell(r, 1).font = TITLE_FONT;
-  const finalPriceInrCell = put(r, 2, { formula: `${f29}/(1-(${marginCell}+${commissionCell}))` } as any);
+  const finalPriceInrCell = putMoney(r, 2, { formula: `${f29}/(1-(${marginCell}+${commissionCell}))` } as any);
   ws.getCell(r, 2).font = TITLE_FONT;
   r += 2;
 
   // --- Currency conversion ---
   put(r, 1, `Exchange rate (INR per 1 ${ctx.currency})`);
-  const fxCell = put(r, 2, ctx.exchangeRateToInr);
+  const fxCell = putMoney(r, 2, ctx.exchangeRateToInr);
   r++;
   put(r, 1, `RATE / KG (${ctx.currency})`);
   ws.getCell(r, 1).font = TITLE_FONT;
-  const rateKgCell = put(r, 2, ctx.currency === 'INR' ? ({ formula: `${finalPriceInrCell}` } as any) : ({ formula: `${finalPriceInrCell}/${fxCell}` } as any));
+  const rateKgCell = putMoney(
+    r,
+    2,
+    ctx.currency === 'INR' ? ({ formula: `${finalPriceInrCell}` } as any) : ({ formula: `${finalPriceInrCell}/${fxCell}` } as any),
+  );
   ws.getCell(r, 2).font = TITLE_FONT;
   r++;
   put(r, 1, `RATE / PIECE (${ctx.currency})`);
   ws.getCell(r, 1).font = TITLE_FONT;
-  const ratePieceCell = put(r, 2, { formula: `${rateKgCell}*${pieceWeightCell}/1000` } as any);
+  const ratePieceCell = putMoney(r, 2, { formula: `${rateKgCell}*${pieceWeightCell}/1000` } as any);
   ws.getCell(r, 2).font = TITLE_FONT;
 
   return { rateKgCell: `'${ws.name}'!${rateKgCell}`, ratePieceCell: `'${ws.name}'!${ratePieceCell}` };

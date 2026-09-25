@@ -32,6 +32,7 @@ model User {
   approvedQuotes      Quote[]                    @relation("ApprovedQuotes")
   notifications      Notification[]
   quoteTemplates     QuoteTemplate[]
+  quoteTemplateGroups QuoteTemplateGroup[]
 }
 
 model RawMaterial {
@@ -71,6 +72,23 @@ model ItemType {
 
   quoteLineItems QuoteLineSegmentItem[]
   templateItems  QuoteTemplateSegmentItem[]
+}
+
+// Duty Drawback / RoDTEP incentive master, controlled by Supervisor/Admin. Chosen per
+// quote-line-item at quote-creation time. The incentive is an internal profit metric only
+// (a government export rebate paid to the exporter) - it never changes the FOB price the
+// customer is quoted.
+model HsnCode {
+  id             Int      @id @default(autoincrement())
+  description    String
+  hsCode         String   @unique
+  uom            String
+  dbkPct         Float
+  rosctlRodepPct Float
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  quoteLineItems QuoteLineSegmentItem[]
 }
 
 model Product {
@@ -153,6 +171,7 @@ model Customer {
 
   quotes Quote[]
   quoteTemplates QuoteTemplate[]
+  quoteTemplateGroups QuoteTemplateGroup[]
 }
 
 model ExchangeRate {
@@ -215,6 +234,11 @@ model QuoteLine {
   qtySets     Int
   targetPrice Float?
 
+  // Supervisor-only, per-Set margin override that wins over the quote-wide override (and
+  // ultimately the customer default) for this Set only - used by "Match target price" to
+  // hit a specific Set's target without moving the price of any other Set in the quote.
+  marginPctOverride Float?
+
   // Rollup of the combined set (sum of all segment-items' piece price * qty-in-set),
   // in INR and the quote's currency - the authoritative per-item figures live on
   // QuoteLineSegmentItem. { ratePerSet: Record<currency, number> }
@@ -258,6 +282,11 @@ model QuoteLineSegmentItem {
   widthCm    Float
   gsm        Float
   qtyPerSet  Int              // how many pieces of this item go into one set
+
+  // Duty Drawback / RoDTEP classification for this item, chosen by the merchandiser at
+  // quote-creation time - drives the internal "Profit incl. DBK" figure (Supervisor-only).
+  hsnCodeId  Int?
+  hsnCode    HsnCode?         @relation(fields: [hsnCodeId], references: [id])
 
   pieceWeightGrams Float?
   qtyKg            Float?     // pieceWeightGrams * qtyPerSet / 1000 - one set's worth
@@ -318,6 +347,7 @@ model QuoteTemplate {
   createdAt   DateTime @default(now())
 
   segments QuoteTemplateSegment[]
+  groupMemberships QuoteTemplateGroupMember[]
 
   @@unique([customerId, name])
 }
@@ -376,6 +406,33 @@ model QuoteTemplateSegmentItemPackaging {
   item         QuoteTemplateSegmentItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   description  String
   ratePerPiece Float
+}
+
+// A named, reusable group of the per-line QuoteTemplates above, covering a whole repeat
+// order (all its Sets at once). Applying a group creates every member line in one shot -
+// each line is priced fresh, same as applying a single template, and is a normal editable
+// QuoteLine afterwards (add/remove items works with no special handling).
+model QuoteTemplateGroup {
+  id          Int      @id @default(autoincrement())
+  customerId  Int
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name        String
+  createdById Int
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  members QuoteTemplateGroupMember[]
+
+  @@unique([customerId, name])
+}
+
+model QuoteTemplateGroupMember {
+  id         Int                @id @default(autoincrement())
+  groupId    Int
+  group      QuoteTemplateGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  templateId Int
+  template   QuoteTemplate      @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  sortOrder  Int                @default(0)
 }
 
 model GeneralSetting {

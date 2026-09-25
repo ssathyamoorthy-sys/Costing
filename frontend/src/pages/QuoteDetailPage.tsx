@@ -1,7 +1,18 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, openBinary } from '../api';
-import type { CostingBreakup, ItemType, Product, ProcessingCharge, Quote, QuoteLine, QuoteTemplate, QuoteTemplateSummary, RawMaterial } from '../types';
+import type {
+  CostingBreakup,
+  HsnCode,
+  ItemType,
+  Product,
+  ProcessingCharge,
+  Quote,
+  QuoteLine,
+  QuoteTemplate,
+  QuoteTemplateSummary,
+  RawMaterial,
+} from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 
@@ -58,6 +69,7 @@ interface FormItem {
   widthCm: string;
   gsm: string;
   qtyPerSet: string;
+  hsnCodeId: number | '';
   packagingCharges: FormPackagingCharge[];
 }
 interface FormSegment {
@@ -73,7 +85,7 @@ interface SetForm {
 }
 
 function emptyItem(): FormItem {
-  return { itemTypeId: '', lengthCm: '', widthCm: '', gsm: '', qtyPerSet: '1', packagingCharges: [] };
+  return { itemTypeId: '', lengthCm: '', widthCm: '', gsm: '', qtyPerSet: '1', hsnCodeId: '', packagingCharges: [] };
 }
 function emptySegment(): FormSegment {
   return { productId: '', yarnComponents: [], items: [emptyItem()] };
@@ -90,6 +102,7 @@ export function QuoteDetailPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [itemTypes, setItemTypes] = useState<ItemType[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
+  const [hsnCodes, setHsnCodes] = useState<HsnCode[]>([]);
   const [colors, setColors] = useState<ProcessingCharge[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -123,6 +136,7 @@ export function QuoteDetailPage() {
     api.get<ItemType[]>('/item-types').then(setItemTypes);
     api.get<RawMaterial[]>('/raw-materials').then(setRawMaterials);
     api.get<ProcessingCharge[]>('/processing-charges').then(setColors);
+    api.get<HsnCode[]>('/hsn-codes').then(setHsnCodes);
   }, []);
   useEffect(() => {
     if (!quote) return;
@@ -164,6 +178,7 @@ export function QuoteDetailPage() {
           widthCm: String(it.widthCm),
           gsm: String(it.gsm),
           qtyPerSet: String(it.qtyPerSet),
+          hsnCodeId: it.hsnCodeId ?? '',
           packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: String(p.ratePerPiece) })),
         })),
       })),
@@ -205,6 +220,7 @@ export function QuoteDetailPage() {
           widthCm: String(it.widthCm),
           gsm: String(it.gsm),
           qtyPerSet: String(it.qtyPerSet),
+          hsnCodeId: '' as number | '',
           packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: String(p.ratePerPiece) })),
         })),
       })),
@@ -334,6 +350,7 @@ export function QuoteDetailPage() {
           widthCm: Number(it.widthCm),
           gsm: Number(it.gsm),
           qtyPerSet: Number(it.qtyPerSet),
+          hsnCodeId: it.hsnCodeId ? Number(it.hsnCodeId) : undefined,
           packagingCharges: it.packagingCharges
             .filter((p) => p.description && p.ratePerPiece)
             .map((p) => ({ description: p.description, ratePerPiece: Number(p.ratePerPiece) })),
@@ -440,10 +457,10 @@ export function QuoteDetailPage() {
 
   function openTermsEditor() {
     setTermsForm({
-      marginPct: quote!.marginPctOverride != null ? String(quote!.marginPctOverride) : '',
-      commissionPct: quote!.commissionPctOverride != null ? String(quote!.commissionPctOverride) : '',
-      wcInterestPct: quote!.wcInterestPctOverride != null ? String(quote!.wcInterestPctOverride) : '',
-      lcInterestPct: quote!.lcInterestPctOverride != null ? String(quote!.lcInterestPctOverride) : '',
+      marginPct: quote!.marginPctOverride != null ? String(quote!.marginPctOverride * 100) : '',
+      commissionPct: quote!.commissionPctOverride != null ? String(quote!.commissionPctOverride * 100) : '',
+      wcInterestPct: quote!.wcInterestPctOverride != null ? String(quote!.wcInterestPctOverride * 100) : '',
+      lcInterestPct: quote!.lcInterestPctOverride != null ? String(quote!.lcInterestPctOverride * 100) : '',
     });
     setShowTermsEditor(true);
   }
@@ -451,10 +468,10 @@ export function QuoteDetailPage() {
   async function saveTermsOverride() {
     try {
       await api.post(`/quotes/${quote!.id}/terms-override`, {
-        marginPctOverride: termsForm.marginPct === '' ? null : Number(termsForm.marginPct),
-        commissionPctOverride: termsForm.commissionPct === '' ? null : Number(termsForm.commissionPct),
-        wcInterestPctOverride: termsForm.wcInterestPct === '' ? null : Number(termsForm.wcInterestPct),
-        lcInterestPctOverride: termsForm.lcInterestPct === '' ? null : Number(termsForm.lcInterestPct),
+        marginPctOverride: termsForm.marginPct === '' ? null : Number(termsForm.marginPct) / 100,
+        commissionPctOverride: termsForm.commissionPct === '' ? null : Number(termsForm.commissionPct) / 100,
+        wcInterestPctOverride: termsForm.wcInterestPct === '' ? null : Number(termsForm.wcInterestPct) / 100,
+        lcInterestPctOverride: termsForm.lcInterestPct === '' ? null : Number(termsForm.lcInterestPct) / 100,
       });
       setShowTermsEditor(false);
       load();
@@ -605,13 +622,13 @@ export function QuoteDetailPage() {
                 </div>
                 {quote.marginPctOverride != null ? (
                   <>
-                    {quote.marginPctOverride}{' '}
+                    {(quote.marginPctOverride * 100).toFixed(2)}%{' '}
                     <span className="muted" style={{ fontSize: 12 }}>
-                      (customer default {quote.customer.marginPct})
+                      (customer default {(quote.customer.marginPct * 100).toFixed(2)}%)
                     </span>
                   </>
                 ) : (
-                  quote.customer.marginPct
+                  `${(quote.customer.marginPct * 100).toFixed(2)}%`
                 )}
               </div>
               <div>
@@ -620,13 +637,13 @@ export function QuoteDetailPage() {
                 </div>
                 {quote.commissionPctOverride != null ? (
                   <>
-                    {quote.commissionPctOverride}{' '}
+                    {(quote.commissionPctOverride * 100).toFixed(2)}%{' '}
                     <span className="muted" style={{ fontSize: 12 }}>
-                      (customer default {quote.customer.commissionPct})
+                      (customer default {(quote.customer.commissionPct * 100).toFixed(2)}%)
                     </span>
                   </>
                 ) : (
-                  quote.customer.commissionPct
+                  `${(quote.customer.commissionPct * 100).toFixed(2)}%`
                 )}
               </div>
               <div>
@@ -635,13 +652,13 @@ export function QuoteDetailPage() {
                 </div>
                 {quote.wcInterestPctOverride != null ? (
                   <>
-                    {quote.wcInterestPctOverride}{' '}
+                    {(quote.wcInterestPctOverride * 100).toFixed(2)}%{' '}
                     <span className="muted" style={{ fontSize: 12 }}>
-                      (customer default {quote.customer.wcInterestPct})
+                      (customer default {(quote.customer.wcInterestPct * 100).toFixed(2)}%)
                     </span>
                   </>
                 ) : (
-                  quote.customer.wcInterestPct
+                  `${(quote.customer.wcInterestPct * 100).toFixed(2)}%`
                 )}
               </div>
               <div>
@@ -650,13 +667,13 @@ export function QuoteDetailPage() {
                 </div>
                 {quote.lcInterestPctOverride != null ? (
                   <>
-                    {quote.lcInterestPctOverride}{' '}
+                    {(quote.lcInterestPctOverride * 100).toFixed(2)}%{' '}
                     <span className="muted" style={{ fontSize: 12 }}>
-                      (customer default {quote.customer.lcInterestPct})
+                      (customer default {(quote.customer.lcInterestPct * 100).toFixed(2)}%)
                     </span>
                   </>
                 ) : (
-                  quote.customer.lcInterestPct
+                  `${(quote.customer.lcInterestPct * 100).toFixed(2)}%`
                 )}
               </div>
             </div>
@@ -666,41 +683,41 @@ export function QuoteDetailPage() {
             <div style={{ marginTop: 10 }}>
               <div className="form-grid">
                 <div>
-                  <label>Margin % (default {quote.customer.marginPct})</label>
+                  <label>Margin % (default {(quote.customer.marginPct * 100).toFixed(2)})</label>
                   <input
                     type="number"
                     step="0.01"
-                    placeholder={String(quote.customer.marginPct)}
+                    placeholder={(quote.customer.marginPct * 100).toFixed(2)}
                     value={termsForm.marginPct}
                     onChange={(e) => setTermsForm((f) => ({ ...f, marginPct: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <label>Commission % (default {quote.customer.commissionPct})</label>
+                  <label>Commission % (default {(quote.customer.commissionPct * 100).toFixed(2)})</label>
                   <input
                     type="number"
                     step="0.01"
-                    placeholder={String(quote.customer.commissionPct)}
+                    placeholder={(quote.customer.commissionPct * 100).toFixed(2)}
                     value={termsForm.commissionPct}
                     onChange={(e) => setTermsForm((f) => ({ ...f, commissionPct: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <label>WC Interest % (default {quote.customer.wcInterestPct})</label>
+                  <label>WC Interest % (default {(quote.customer.wcInterestPct * 100).toFixed(2)})</label>
                   <input
                     type="number"
                     step="0.01"
-                    placeholder={String(quote.customer.wcInterestPct)}
+                    placeholder={(quote.customer.wcInterestPct * 100).toFixed(2)}
                     value={termsForm.wcInterestPct}
                     onChange={(e) => setTermsForm((f) => ({ ...f, wcInterestPct: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <label>LC Interest % (default {quote.customer.lcInterestPct})</label>
+                  <label>LC Interest % (default {(quote.customer.lcInterestPct * 100).toFixed(2)})</label>
                   <input
                     type="number"
                     step="0.01"
-                    placeholder={String(quote.customer.lcInterestPct)}
+                    placeholder={(quote.customer.lcInterestPct * 100).toFixed(2)}
                     value={termsForm.lcInterestPct}
                     onChange={(e) => setTermsForm((f) => ({ ...f, lcInterestPct: e.target.value }))}
                   />
@@ -804,6 +821,23 @@ export function QuoteDetailPage() {
                               <td className="mono">₹{Number(b[r.key]).toFixed(4)}</td>
                             </tr>
                           ))}
+                          {b.hsnCode && (
+                            <>
+                              <tr>
+                                <td>HSN Code (DBK+ROSCTL/RODEP)</td>
+                                <td className="mono">
+                                  {b.hsnCode} ({((b.totalIncentivePct ?? 0) * 100).toFixed(2)}%)
+                                </td>
+                              </tr>
+                              <tr>
+                                <td>Profit incl. DBK / pc ({currency})</td>
+                                <td className="mono">
+                                  {symbol}
+                                  {(b.profitInclDbk?.[currency] ?? 0).toFixed(4)}
+                                </td>
+                              </tr>
+                            </>
+                          )}
                         </tbody>
                       </table>
                     );
@@ -1149,6 +1183,20 @@ export function QuoteDetailPage() {
                       <div className="field">
                         <label>GSM</label>
                         <input type="number" value={item.gsm} onChange={(e) => updateItem(segIdx, itemIdx, { gsm: e.target.value })} />
+                      </div>
+                      <div className="field">
+                        <label>HSN Code (Duty Drawback)</label>
+                        <select
+                          value={item.hsnCodeId}
+                          onChange={(e) => updateItem(segIdx, itemIdx, { hsnCodeId: e.target.value ? Number(e.target.value) : '' })}
+                        >
+                          <option value="">None</option>
+                          {hsnCodes.map((h) => (
+                            <option key={h.id} value={h.id}>
+                              {h.description} - {h.hsCode}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       {mode === 'bundle' && (
                         <div className="field">

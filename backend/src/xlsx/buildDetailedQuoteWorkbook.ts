@@ -142,10 +142,10 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
           packingCostPerKg: item.itemType.packingCostPerKg,
           accessoryRows,
           freightExportPerKg,
-          wcInterestPct: quote.customer.wcInterestPct,
-          lcInterestPct: quote.customer.lcInterestPct,
-          marginPct: quote.customer.marginPct,
-          commissionPct: quote.customer.commissionPct,
+          wcInterestPct: quote.wcInterestPctOverride ?? quote.customer.wcInterestPct,
+          lcInterestPct: quote.lcInterestPctOverride ?? quote.customer.lcInterestPct,
+          marginPct: line.marginPctOverride ?? quote.marginPctOverride ?? quote.customer.marginPct,
+          commissionPct: quote.commissionPctOverride ?? quote.customer.commissionPct,
         };
 
         const sheetName = uniqueSheetName(`S${lineIdx + 1}-${item.itemType.name}`);
@@ -192,7 +192,9 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     summaryWs.getCell(row, 4).value = s.size;
     summaryWs.getCell(row, 5).value = s.qty;
     summaryWs.getCell(row, 6).value = { formula: s.rateKgFormula } as any;
+    summaryWs.getCell(row, 6).numFmt = '#,##0.0000';
     summaryWs.getCell(row, 7).value = { formula: s.ratePcFormula } as any;
+    summaryWs.getCell(row, 7).numFmt = '#,##0.0000';
     row++;
   }
 

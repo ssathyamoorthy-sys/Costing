@@ -27,6 +27,7 @@ interface QuoteForPdf {
         widthCm: number;
         gsm: number;
         qtyPerSet: number;
+        qtyKg: number | null;
         costBreakupJson: string | null;
       }[];
     }[];
@@ -74,13 +75,18 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   doc.text(`Currency: ${currency}`, 300, 140);
   if (quote.validityDate) doc.text(`Valid until: ${quote.validityDate.toLocaleDateString()}`, 300, 126);
 
+  // One flat table across every item in every Set - no per-Set grouping - with a
+  // grand-total footer row.
   const cols = [
-    { key: 'item', label: 'Item', width: 100 },
-    { key: 'quality', label: 'Quality', width: 65 },
-    { key: 'size', label: 'Size (cm)', width: 60 },
-    { key: 'gsm', label: 'GSM', width: 35 },
-    { key: 'qtyPerSet', label: 'Qty/Set', width: 55, align: 'right' as const },
-    { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 70, align: 'right' as const },
+    { key: 'item', label: 'Item', width: 60 },
+    { key: 'quality', label: 'Quality', width: 90 },
+    { key: 'size', label: 'Size (cm)', width: 50 },
+    { key: 'gsm', label: 'GSM', width: 28 },
+    { key: 'color', label: 'Color', width: 40 },
+    { key: 'qty', label: 'Qty', width: 40, align: 'right' as const },
+    { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 60, align: 'right' as const },
+    { key: 'totalKg', label: 'Total Qty in Kg', width: 65, align: 'right' as const },
+    { key: 'totalValue', label: 'Total Value', width: 65, align: 'right' as const },
   ];
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
 
@@ -93,81 +99,67 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
     }
   }
 
-  quote.lines.forEach((line, li) => {
-    const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
-    const ratePerSet = setRollup?.ratePerSet?.[currency];
-    const isSingle = line.segments.length === 1 && line.segments[0].items.length === 1;
+  ensureRoom(16);
+  drawTableRow(
+    doc,
+    y,
+    cols.map((c) => ({ text: c.label, width: c.width, align: c.align })),
+    { bold: true },
+  );
+  y += 12;
+  doc.moveTo(40, y).lineTo(40 + tableWidth, y).strokeColor('#dde3ec').stroke();
+  y += 4;
 
-    if (isSingle) {
-      // A plain single-product line needs no repeated table scaffolding - one line covers it.
-      const seg = line.segments[0];
-      const item = seg.items[0];
-      ensureRoom(18);
-      doc.font('Helvetica-Bold').fontSize(9).text(`Set #${li + 1}`, 40, y, { width: 30 });
-      doc
-        .font('Helvetica')
-        .fontSize(9)
-        .text(
-          `${seg.product.name || seg.product.code} - ${item.itemType.name} - ${line.color} - ${item.lengthCm}x${item.widthCm}cm, GSM ${item.gsm} - Qty ${line.qtySets.toLocaleString()} pcs`,
-          72,
-          y,
-          { width: 340 },
-        );
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(9)
-        .text(ratePerSet != null ? `${symbol}${ratePerSet.toFixed(2)} / pc` : '-', 415, y, { width: tableWidth - 375, align: 'right' });
-      y += 20;
-      return;
-    }
+  let grandQty = 0;
+  let grandKg = 0;
+  let grandValue = 0;
 
-    ensureRoom(60);
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(9.5)
-      .text(`Set #${li + 1} - Color: ${line.color} - ${line.qtySets.toLocaleString()} set(s) ordered`, 40, y);
-    y += 16;
-
-    drawTableRow(
-      doc,
-      y,
-      cols.map((c) => ({ text: c.label, width: c.width, align: c.align })),
-      { bold: true },
-    );
-    y += 12;
-    doc.moveTo(40, y).lineTo(40 + tableWidth, y).strokeColor('#dde3ec').stroke();
-    y += 4;
-
+  for (const line of quote.lines) {
     for (const seg of line.segments) {
       for (const item of seg.items) {
-        ensureRoom(16);
         const breakup: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
         const ratePc = breakup?.ratePerPiece?.[currency];
+        const qty = line.qtySets * item.qtyPerSet;
+        const totalKg = (item.qtyKg ?? 0) * line.qtySets;
+        const totalValue = ratePc != null ? ratePc * qty : null;
+
+        grandQty += qty;
+        grandKg += totalKg;
+        if (totalValue != null) grandValue += totalValue;
+
+        ensureRoom(16);
         drawTableRow(doc, y, [
           { text: item.itemType.name, width: cols[0].width },
           { text: seg.product.name || seg.product.code, width: cols[1].width },
           { text: `${item.lengthCm}x${item.widthCm}`, width: cols[2].width },
           { text: String(item.gsm), width: cols[3].width },
-          { text: item.qtyPerSet.toLocaleString(), width: cols[4].width, align: 'right' },
-          { text: ratePc != null ? `${symbol}${ratePc.toFixed(2)}` : '-', width: cols[5].width, align: 'right' },
+          { text: line.color, width: cols[4].width },
+          { text: qty.toLocaleString(), width: cols[5].width, align: 'right' },
+          { text: ratePc != null ? ratePc.toFixed(2) : '-', width: cols[6].width, align: 'right' },
+          { text: totalKg.toFixed(1), width: cols[7].width, align: 'right' },
+          { text: totalValue != null ? totalValue.toFixed(2) : '-', width: cols[8].width, align: 'right' },
         ]);
         y += 16;
       }
     }
+  }
 
-    ensureRoom(20);
-    y += 4;
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(9)
-      .text(
-        `Combined price / set: ${ratePerSet != null ? `${symbol}${ratePerSet.toFixed(2)}` : '-'}`,
-        40,
-        y,
-        { width: tableWidth, align: 'right' },
-      );
-    y += 22;
-  });
+  ensureRoom(20);
+  doc.moveTo(40, y).lineTo(40 + tableWidth, y).strokeColor('#dde3ec').stroke();
+  y += 4;
+  drawTableRow(
+    doc,
+    y,
+    [
+      { text: 'Grand Total', width: cols[0].width + cols[1].width + cols[2].width + cols[3].width + cols[4].width },
+      { text: grandQty.toLocaleString(), width: cols[5].width, align: 'right' },
+      { text: '', width: cols[6].width, align: 'right' },
+      { text: grandKg.toFixed(1), width: cols[7].width, align: 'right' },
+      { text: `${symbol}${grandValue.toFixed(2)}`, width: cols[8].width, align: 'right' },
+    ],
+    { bold: true },
+  );
+  y += 22;
 
   // --- Terms & conditions ---
   ensureRoom(120);

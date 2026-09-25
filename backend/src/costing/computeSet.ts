@@ -17,6 +17,7 @@ export interface ItemInput {
   widthCm: number;
   gsm: number;
   qtyPerSet: number;
+  hsnCodeId?: number | null;
   accessoryOverrides?: ItemAccessoryOverrideInput[];
   packagingCharges?: ItemPackagingChargeInput[];
 }
@@ -160,6 +161,16 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         finalAccessories.push({ name: p.description, costPerPiece: p.ratePerPiece });
       }
 
+      let hsnCode: string | null = null;
+      let totalIncentivePct = 0;
+      if (itemInput.hsnCodeId) {
+        const hsn = await prisma.hsnCode.findUnique({ where: { id: itemInput.hsnCodeId } });
+        if (hsn) {
+          hsnCode = hsn.hsCode;
+          totalIncentivePct = hsn.dbkPct + hsn.rosctlRodepPct;
+        }
+      }
+
       const breakup = computeCosting({
         weavingWastagePct: product.weavingWastagePct,
         weavingSizingCostPerKg: product.weavingSizingCostPerKg,
@@ -187,11 +198,22 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         exchangeRates,
       });
 
+      // Duty Drawback / RoDTEP - an internal profit metric only, never added to the price
+      // quoted to the customer (ratePerKg/ratePerPiece above are untouched).
+      const profitPerKgInr = breakup.finalPricePerKgInr - breakup.subtotalBeforeMargin;
+      const dbkProfitPerKgInr = totalIncentivePct * breakup.finalPricePerKgInr;
+      const profitInclDbkPerKgInr = profitPerKgInr + dbkProfitPerKgInr;
+      const profitInclDbk: Record<string, number> = {};
+      for (const [currency, rateToInr] of Object.entries(exchangeRates)) {
+        const perKg = currency === 'INR' ? profitInclDbkPerKgInr : profitInclDbkPerKgInr / rateToInr;
+        profitInclDbk[currency] = (perKg * breakup.pieceWeightGrams) / 1000;
+      }
+
       computedItems.push({
         ...itemInput,
         pieceWeightGrams: breakup.pieceWeightGrams,
         qtyKg: breakup.qtyKg,
-        breakup,
+        breakup: { ...breakup, hsnCode, totalIncentivePct, profitPerKgInr, dbkProfitPerKgInr, profitInclDbkPerKgInr, profitInclDbk },
       });
     }
 

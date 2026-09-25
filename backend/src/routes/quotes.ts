@@ -61,6 +61,7 @@ async function recomputeLine(quoteLineId: number) {
         widthCm: it.widthCm,
         gsm: it.gsm,
         qtyPerSet: it.qtyPerSet,
+        hsnCodeId: it.hsnCodeId,
         accessoryOverrides: it.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })),
         packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })),
       })),
@@ -99,6 +100,7 @@ const lineFull = {
       items: {
         include: {
           itemType: true,
+          hsnCode: true,
           accessoryOverrides: { include: { accessoryType: true } },
           packagingCharges: true,
         },
@@ -143,7 +145,7 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
     { header: 'GSM', key: 'gsm', width: 8 },
     { header: 'Color', key: 'color', width: 14 },
     { header: 'Qty/Set', key: 'qtyPerSet', width: 10 },
-    { header: `Rate/Pc (${currency})`, key: 'ratePc', width: 14 },
+    { header: `Rate/Pc (${currency})`, key: 'ratePc', width: 14, numFmt: '#,##0.0000' },
   ];
 
   const rows: Record<string, unknown>[] = [];
@@ -267,6 +269,7 @@ const itemSchema = z.object({
   widthCm: z.number().positive(),
   gsm: z.number().positive(),
   qtyPerSet: z.number().int().positive(),
+  hsnCodeId: z.number().int().positive().nullable().optional(),
   accessoryOverrides: z.array(itemAccessoryOverrideSchema).optional(),
   packagingCharges: z.array(itemPackagingChargeSchema).optional(),
 });
@@ -318,6 +321,7 @@ function buildSegmentsCreateInput(segments: Awaited<ReturnType<typeof computeSet
         widthCm: item.widthCm,
         gsm: item.gsm,
         qtyPerSet: item.qtyPerSet,
+        hsnCodeId: item.hsnCodeId ?? undefined,
         pieceWeightGrams: item.pieceWeightGrams,
         qtyKg: item.qtyKg,
         costBreakupJson: JSON.stringify(item.breakup),

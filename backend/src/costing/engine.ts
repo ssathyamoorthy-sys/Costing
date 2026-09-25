@@ -90,6 +90,16 @@ export interface CostingBreakup {
 
   ratePerKg: Record<string, number>;
   ratePerPiece: Record<string, number>;
+
+  // Duty Drawback / RoDTEP incentive - an internal profit metric only, computed in
+  // computeSet.ts (needs a DB lookup of the chosen HsnCode, so it's outside this pure
+  // function). Never changes ratePerKg/ratePerPiece, the price actually quoted.
+  hsnCode?: string | null;
+  totalIncentivePct?: number;
+  profitPerKgInr?: number; // finalPricePerKgInr - subtotalBeforeMargin (true grossed-up profit)
+  dbkProfitPerKgInr?: number; // totalIncentivePct * finalPricePerKgInr
+  profitInclDbkPerKgInr?: number;
+  profitInclDbk?: Record<string, number>; // per currency, per piece - profit + DBK incentive
 }
 
 const pct = (v: number) => v; // fractions are already 0-1, kept as a named no-op for clarity at call sites
