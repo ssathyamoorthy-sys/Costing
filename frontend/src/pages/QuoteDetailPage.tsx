@@ -496,6 +496,24 @@ export function QuoteDetailPage() {
     }
   }
 
+  async function matchTargetPrice(lineId: number) {
+    try {
+      await api.post(`/quotes/${quote!.id}/lines/${lineId}/match-target-price`);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function clearLineMarginOverride(lineId: number) {
+    try {
+      await api.post(`/quotes/${quote!.id}/lines/${lineId}/clear-margin-override`);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   async function submitOverride(segmentId: number) {
     if (!overrideMaterialId || !overridePrice) return;
     try {
@@ -809,6 +827,15 @@ export function QuoteDetailPage() {
       {quote.lines.map((line, lineIdx) => {
         const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
         const ratePerSet = setRollup?.ratePerSet?.[currency];
+        // Preview of the margin "Match target price" would set - see the endpoint's own
+        // comment in routes/quotes.ts for the derivation.
+        let requiredMarginPct: number | null = null;
+        if (ratePerSet != null && line.targetPrice) {
+          const commission = quote.commissionPctOverride ?? quote.customer.commissionPct;
+          const currentMargin = line.marginPctOverride ?? quote.marginPctOverride ?? quote.customer.marginPct;
+          const c = ratePerSet * (1 - (currentMargin + commission));
+          requiredMarginPct = 1 - commission - c / line.targetPrice;
+        }
         const isExpanded = expanded[line.id];
         const isSingle = line.segments.length === 1 && line.segments[0].items.length === 1;
         const singleSeg = isSingle ? line.segments[0] : null;
@@ -1040,6 +1067,42 @@ export function QuoteDetailPage() {
                 </tr>
               </tbody>
             </table>
+
+            {isSupervisor && line.targetPrice != null && (
+              <div style={{ marginTop: 8 }}>
+                <table>
+                  <tbody>
+                    <tr>
+                      <td>Target price</td>
+                      <td className="right mono">
+                        {symbol}
+                        {line.targetPrice.toFixed(4)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Difference to target</td>
+                      <td className="right mono">
+                        {ratePerSet != null ? `${symbol}${(ratePerSet - line.targetPrice).toFixed(4)}` : '-'}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Margin needed to hit target</td>
+                      <td className="right mono">{requiredMarginPct != null ? `${(requiredMarginPct * 100).toFixed(2)}%` : '-'}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div className="tag-row" style={{ marginTop: 6 }}>
+                  <button className="btn small" onClick={() => matchTargetPrice(line.id)}>
+                    Match target price
+                  </button>
+                  {line.marginPctOverride != null && (
+                    <button className="btn small" onClick={() => clearLineMarginOverride(line.id)}>
+                      Clear margin override ({(line.marginPctOverride * 100).toFixed(2)}%)
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {isExpanded && <div style={{ marginTop: 14 }}>{line.segments.map(segmentDetail)}</div>}
           </div>

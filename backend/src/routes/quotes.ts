@@ -640,6 +640,54 @@ quotesRouter.post('/:id/terms-override', requireRole('SUPERVISOR', 'ADMIN'), asy
   res.json({ ...updated, lines: sanitizeLinesForRole(updated.lines, req.user!.role), warnings });
 });
 
+// Supervisor: set this Set's own margin override so its combined price exactly hits the
+// merchandiser's target price - only this Set's price moves, nothing else in the quote.
+//
+// Combined price scales as C / (1 - (margin + commission)) for a fixed C (everything else
+// in the cost stack held constant), so given the CURRENT combined price and CURRENT
+// effective margin, C = currentTotal * (1 - (currentMargin + commission)), and solving for
+// the margin that makes the combined price equal targetPrice:
+//   requiredMargin = 1 - commission - C / targetPrice
+quotesRouter.post('/:id/lines/:lineId/match-target-price', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const quoteId = Number(req.params.id);
+  const lineId = Number(req.params.lineId);
+
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId }, include: { customer: true } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+
+  const line = await prisma.quoteLine.findUnique({ where: { id: lineId } });
+  if (!line || line.quoteId !== quoteId) return res.status(404).json({ error: 'Line not found' });
+  if (!line.targetPrice || line.targetPrice <= 0) return res.status(422).json({ error: 'This set has no target price set' });
+
+  const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
+  const currentTotal = setRollup?.ratePerSet?.[quote.currency];
+  if (currentTotal == null) return res.status(422).json({ error: 'This set has not been priced yet' });
+
+  const commission = quote.commissionPctOverride ?? quote.customer.commissionPct;
+  const currentMargin = line.marginPctOverride ?? quote.marginPctOverride ?? quote.customer.marginPct;
+
+  const c = currentTotal * (1 - (currentMargin + commission));
+  const requiredMargin = 1 - commission - c / line.targetPrice;
+
+  await prisma.quoteLine.update({ where: { id: lineId }, data: { marginPctOverride: requiredMargin } });
+  const warnings = await recomputeLine(lineId);
+
+  const updatedLine = await prisma.quoteLine.findUniqueOrThrow({ where: { id: lineId }, include: lineFull });
+  res.json({ line: sanitizeLineForRole(updatedLine, req.user!.role), marginPctOverride: requiredMargin, warnings });
+});
+
+quotesRouter.post('/:id/lines/:lineId/clear-margin-override', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const lineId = Number(req.params.lineId);
+  const line = await prisma.quoteLine.findUnique({ where: { id: lineId } });
+  if (!line || line.quoteId !== Number(req.params.id)) return res.status(404).json({ error: 'Line not found' });
+
+  await prisma.quoteLine.update({ where: { id: lineId }, data: { marginPctOverride: null } });
+  const warnings = await recomputeLine(lineId);
+
+  const updatedLine = await prisma.quoteLine.findUniqueOrThrow({ where: { id: lineId }, include: lineFull });
+  res.json({ line: sanitizeLineForRole(updatedLine, req.user!.role), warnings });
+});
+
 // --- Workflow ---
 
 quotesRouter.post('/:id/submit', requireRole('MERCHANDISER', 'ADMIN'), async (req, res) => {

@@ -69,6 +69,11 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
   if (!quote) throw new Error(`Quote ${input.quoteId} not found`);
   const customer = quote.customer;
 
+  // Per-Set margin override (from "Match target price") wins over the quote-wide override,
+  // which wins over the customer default.
+  const line = input.quoteLineId ? await prisma.quoteLine.findUnique({ where: { id: input.quoteLineId } }) : null;
+  const marginPct = line?.marginPctOverride ?? quote.marginPctOverride ?? customer.marginPct;
+
   const freightSetting = await prisma.generalSetting.findUnique({ where: { key: 'freightExportPerKg' } });
   const freightExportPerKg = freightSetting ? Number(freightSetting.value) : 0;
   if (!freightSetting) {
@@ -189,7 +194,7 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         freightExportPerKg,
         wcInterestPct: quote.wcInterestPctOverride ?? customer.wcInterestPct,
         lcInterestPct: quote.lcInterestPctOverride ?? customer.lcInterestPct,
-        marginPct: quote.marginPctOverride ?? customer.marginPct,
+        marginPct,
         commissionPct: quote.commissionPctOverride ?? customer.commissionPct,
         lengthCm: itemInput.lengthCm,
         widthCm: itemInput.widthCm,

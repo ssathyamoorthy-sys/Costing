@@ -207,6 +207,7 @@ export interface QuoteLine {
   color: string;
   qtySets: number;
   targetPrice?: number | null;
+  marginPctOverride?: number | null;
   costBreakupJson?: string | null; // { ratePerSet: Record<currency, number> }
   segments: QuoteLineSegment[];
 }
