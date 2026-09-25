@@ -247,6 +247,20 @@ export interface QuoteTemplate extends QuoteTemplateSummary {
   segments: QuoteLineSegment[];
 }
 
+export interface QuoteTemplateGroupSummary {
+  id: number;
+  name: string;
+  createdAt: string;
+  createdBy?: { name: string };
+  setCount: number;
+}
+
+export interface QuoteTemplateGroup {
+  id: number;
+  name: string;
+  templates: QuoteTemplate[];
+}
+
 export interface Notification {
   id: number;
   type: string;

@@ -10,6 +10,8 @@ import type {
   Quote,
   QuoteLine,
   QuoteTemplate,
+  QuoteTemplateGroup,
+  QuoteTemplateGroupSummary,
   QuoteTemplateSummary,
   RawMaterial,
 } from '../types';
@@ -115,6 +117,9 @@ export function QuoteDetailPage() {
   const [showYarnEditorSingle, setShowYarnEditorSingle] = useState(false);
   const [templates, setTemplates] = useState<QuoteTemplateSummary[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [templateGroups, setTemplateGroups] = useState<QuoteTemplateGroupSummary[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [applyingGroup, setApplyingGroup] = useState(false);
 
   const [overrideForSegment, setOverrideForSegment] = useState<number | null>(null);
   const [overrideMaterialId, setOverrideMaterialId] = useState<number | ''>('');
@@ -141,6 +146,7 @@ export function QuoteDetailPage() {
   useEffect(() => {
     if (!quote) return;
     api.get<QuoteTemplateSummary[]>(`/quote-templates?customerId=${quote.customerId}`).then(setTemplates);
+    api.get<QuoteTemplateGroupSummary[]>(`/quote-template-groups?customerId=${quote.customerId}`).then(setTemplateGroups);
   }, [quote?.customerId]);
 
   if (!quote) return error ? <Alert type="error">{error}</Alert> : <p className="muted">Loading...</p>;
@@ -239,6 +245,59 @@ export function QuoteDetailPage() {
       alert(`Saved as template "${name}". It'll show up under "Load from template" next time you quote this customer.`);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function saveQuoteAsTemplateGroup() {
+    const name = prompt('Name this whole-quote recipe (e.g. "Greenline Monthly Order"):');
+    if (!name) return;
+    try {
+      await api.post(`/quotes/${quote!.id}/save-as-template-group`, { name });
+      const list = await api.get<QuoteTemplateGroupSummary[]>(`/quote-template-groups?customerId=${quote!.customerId}`);
+      setTemplateGroups(list);
+      alert(`Saved as recipe "${name}" (${quote!.lines.length} set(s)). It'll show up under "Apply saved recipe" next time you quote this customer.`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  // Re-creates every Set from a saved whole-quote recipe in one go, reusing the same
+  // per-line create endpoint used everywhere else - each Set is priced fresh off today's
+  // rates, and the result is a normal editable QuoteLine (add/remove items works as usual).
+  async function applyTemplateGroup(groupId: number) {
+    setSelectedGroupId(String(groupId));
+    setApplyingGroup(true);
+    setError(null);
+    try {
+      const group = await api.get<QuoteTemplateGroup>(`/quote-template-groups/${groupId}`);
+      const allWarnings: string[] = [];
+      for (const template of group.templates) {
+        const payload = {
+          color: template.color,
+          qtySets: template.qtySets,
+          segments: template.segments.map((seg) => ({
+            productId: seg.productId,
+            yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })),
+            items: seg.items.map((it) => ({
+              itemTypeId: it.itemTypeId,
+              lengthCm: it.lengthCm,
+              widthCm: it.widthCm,
+              gsm: it.gsm,
+              qtyPerSet: it.qtyPerSet,
+              packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })),
+            })),
+          })),
+        };
+        const res = await api.post<{ line: QuoteLine; warnings: string[] }>(`/quotes/${quote!.id}/lines`, payload);
+        allWarnings.push(...res.warnings);
+      }
+      setWarnings(allWarnings);
+      setSelectedGroupId('');
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setApplyingGroup(false);
     }
   }
 
@@ -549,6 +608,11 @@ export function QuoteDetailPage() {
               title="Full cost build-up as live Excel formulas, one sheet per item"
             >
               Download Excel (with formulas)
+            </button>
+          )}
+          {canEditLines && quote.lines.length > 0 && (
+            <button className="btn" onClick={saveQuoteAsTemplateGroup} title="Save every set in this quote as one named, reusable recipe">
+              Save quote as template
             </button>
           )}
           <button className="btn" onClick={() => navigate('/quotes')}>
@@ -985,9 +1049,25 @@ export function QuoteDetailPage() {
       {quote.lines.length === 0 && <p className="muted">No lines yet.</p>}
 
       {canEditLines && !showForm && (
-        <button className="btn primary" onClick={startNewSet}>
-          + Add set
-        </button>
+        <div className="tag-row">
+          <button className="btn primary" onClick={startNewSet}>
+            + Add set
+          </button>
+          {templateGroups.length > 0 && (
+            <select
+              value={selectedGroupId}
+              disabled={applyingGroup}
+              onChange={(e) => e.target.value && applyTemplateGroup(Number(e.target.value))}
+            >
+              <option value="">{applyingGroup ? 'Applying recipe...' : 'Apply saved recipe (whole quote)...'}</option>
+              {templateGroups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} ({g.setCount} set{g.setCount === 1 ? '' : 's'})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
       )}
 
       {canEditLines && showForm && (

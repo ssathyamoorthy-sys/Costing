@@ -420,36 +420,33 @@ quotesRouter.delete('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISO
 // template later recomputes it fresh off current rates and customer terms.
 const saveAsTemplateSchema = z.object({ name: z.string().min(1) });
 
-quotesRouter.post('/:id/lines/:lineId/save-as-template', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
-  const parsed = saveAsTemplateSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+type LineWithSegmentsForTemplate = {
+  color: string;
+  qtySets: number;
+  segments: {
+    productId: number;
+    sortOrder: number;
+    yarnComponents: { slot: string; rawMaterialId: number; mixingPct: number }[];
+    items: {
+      itemTypeId: number;
+      lengthCm: number;
+      widthCm: number;
+      gsm: number;
+      qtyPerSet: number;
+      accessoryOverrides: { accessoryTypeId: number; costPerPiece: number }[];
+      packagingCharges: { description: string; ratePerPiece: number }[];
+    }[];
+  }[];
+};
 
-  const lineId = Number(req.params.lineId);
-  const line = await prisma.quoteLine.findUnique({
-    where: { id: lineId },
-    include: {
-      quote: { select: { customerId: true } },
-      segments: {
-        orderBy: { sortOrder: 'asc' },
-        include: {
-          yarnComponents: true,
-          items: { include: { accessoryOverrides: true, packagingCharges: true } },
-        },
-      },
-    },
-  });
-  if (!line || line.quoteId !== Number(req.params.id)) return res.status(404).json({ error: 'Line not found' });
-
-  const existing = await prisma.quoteTemplate.findFirst({ where: { customerId: line.quote.customerId, name: parsed.data.name } });
-  if (existing) return res.status(409).json({ error: `A template named "${parsed.data.name}" already exists for this customer` });
-
-  const template = await prisma.quoteTemplate.create({
+async function createTemplateFromLine(line: LineWithSegmentsForTemplate, customerId: number, name: string, createdById: number) {
+  return prisma.quoteTemplate.create({
     data: {
-      customerId: line.quote.customerId,
-      name: parsed.data.name,
+      customerId,
+      name,
       color: line.color,
       qtySets: line.qtySets,
-      createdById: req.user!.userId,
+      createdById,
       segments: {
         create: line.segments.map((seg, i) => ({
           productId: seg.productId,
@@ -474,8 +471,84 @@ quotesRouter.post('/:id/lines/:lineId/save-as-template', requireRole('MERCHANDIS
       },
     },
   });
+}
+
+quotesRouter.post('/:id/lines/:lineId/save-as-template', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const parsed = saveAsTemplateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const lineId = Number(req.params.lineId);
+  const line = await prisma.quoteLine.findUnique({
+    where: { id: lineId },
+    include: {
+      quote: { select: { customerId: true } },
+      segments: {
+        orderBy: { sortOrder: 'asc' },
+        include: {
+          yarnComponents: true,
+          items: { include: { accessoryOverrides: true, packagingCharges: true } },
+        },
+      },
+    },
+  });
+  if (!line || line.quoteId !== Number(req.params.id)) return res.status(404).json({ error: 'Line not found' });
+
+  const existing = await prisma.quoteTemplate.findFirst({ where: { customerId: line.quote.customerId, name: parsed.data.name } });
+  if (existing) return res.status(409).json({ error: `A template named "${parsed.data.name}" already exists for this customer` });
+
+  const template = await createTemplateFromLine(line, line.quote.customerId, parsed.data.name, req.user!.userId);
 
   res.status(201).json(template);
+});
+
+// Saves every current line in this quote as a named, reusable group of templates (one
+// underlying QuoteTemplate per Set, auto-named "<group name> - Set N") - a repeat order's
+// whole recipe, not just one Set. Applying the group later re-creates every line fresh,
+// same as applying a single template.
+const saveAsTemplateGroupSchema = z.object({ name: z.string().min(1) });
+
+quotesRouter.post('/:id/save-as-template-group', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const parsed = saveAsTemplateGroupSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const quote = await prisma.quote.findUnique({
+    where: { id: Number(req.params.id) },
+    include: {
+      lines: {
+        include: {
+          segments: {
+            orderBy: { sortOrder: 'asc' },
+            include: {
+              yarnComponents: true,
+              items: { include: { accessoryOverrides: true, packagingCharges: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+  if (quote.lines.length === 0) return res.status(400).json({ error: 'This quote has no sets to save yet' });
+
+  const existingGroup = await prisma.quoteTemplateGroup.findFirst({ where: { customerId: quote.customerId, name: parsed.data.name } });
+  if (existingGroup) return res.status(409).json({ error: `A template group named "${parsed.data.name}" already exists for this customer` });
+
+  const memberTemplates = [];
+  for (let i = 0; i < quote.lines.length; i++) {
+    const template = await createTemplateFromLine(quote.lines[i], quote.customerId, `${parsed.data.name} - Set ${i + 1}`, req.user!.userId);
+    memberTemplates.push(template);
+  }
+
+  const group = await prisma.quoteTemplateGroup.create({
+    data: {
+      customerId: quote.customerId,
+      name: parsed.data.name,
+      createdById: req.user!.userId,
+      members: { create: memberTemplates.map((t, i) => ({ templateId: t.id, sortOrder: i })) },
+    },
+  });
+
+  res.status(201).json(group);
 });
 
 // Supervisor: override one raw material's price for a specific quote-line SEGMENT
