@@ -897,8 +897,39 @@ export function QuoteDetailPage() {
                   {seg.items.map((item) => {
                     const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
                     if (!b || !('yarnCostPerKg' in b)) return null;
+                    const effectiveMargin = line.marginPctOverride ?? quote!.marginPctOverride ?? quote!.customer.marginPct;
+                    const totalLossPct = b.bomMultiplier ? 1 - 1 / b.bomMultiplier : 0;
                     return (
-                      <table className="breakup-table" key={`bk-${item.id}`} style={{ marginTop: 8 }}>
+                      <div key={`hl-${item.id}`}>
+                        <div className="highlight-stats">
+                          <div className="stat-tile">
+                            <div className="stat-label">Rate / Kg</div>
+                            <div className="stat-value">
+                              {symbol}
+                              {(b.ratePerKg?.[currency] ?? 0).toFixed(2)}
+                            </div>
+                          </div>
+                          <div className="stat-tile">
+                            <div className="stat-label">Margin</div>
+                            <div className="stat-value">{(effectiveMargin * 100).toFixed(2)}%</div>
+                          </div>
+                          <div className="stat-tile">
+                            <div className="stat-label">Total BOM (yarn cost/kg)</div>
+                            <div className="stat-value">₹{b.yarnCostPerKg.toFixed(2)}</div>
+                          </div>
+                          <div className="stat-tile">
+                            <div className="stat-label">Total Loss %</div>
+                            <div className="stat-value">{(totalLossPct * 100).toFixed(2)}%</div>
+                          </div>
+                          <div className="stat-tile">
+                            <div className="stat-label">Total Profit / pc ({currency})</div>
+                            <div className="stat-value">
+                              {symbol}
+                              {(b.profitInclDbk?.[currency] ?? 0).toFixed(4)}
+                            </div>
+                          </div>
+                        </div>
+                        <table className="breakup-table" key={`bk-${item.id}`} style={{ marginTop: 8 }}>
                         <thead>
                           <tr>
                             <th>{item.itemType?.name} - cost stack (per kg, INR)</th>
@@ -913,24 +944,16 @@ export function QuoteDetailPage() {
                             </tr>
                           ))}
                           {b.hsnCode && (
-                            <>
-                              <tr>
-                                <td>HSN Code (DBK+ROSCTL/RODEP)</td>
-                                <td className="mono">
-                                  {b.hsnCode} ({((b.totalIncentivePct ?? 0) * 100).toFixed(2)}%)
-                                </td>
-                              </tr>
-                              <tr>
-                                <td>Profit incl. DBK / pc ({currency})</td>
-                                <td className="mono">
-                                  {symbol}
-                                  {(b.profitInclDbk?.[currency] ?? 0).toFixed(4)}
-                                </td>
-                              </tr>
-                            </>
+                            <tr>
+                              <td>HSN Code (DBK+ROSCTL/RODEP)</td>
+                              <td className="mono">
+                                {b.hsnCode} ({((b.totalIncentivePct ?? 0) * 100).toFixed(2)}%)
+                              </td>
+                            </tr>
                           )}
                         </tbody>
                       </table>
+                      </div>
                     );
                   })}
 

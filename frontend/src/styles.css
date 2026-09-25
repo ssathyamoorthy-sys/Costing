@@ -152,3 +152,14 @@ tr:hover td { background: var(--blue-light); }
 .line-card .line-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .breakup-table td:last-child, .breakup-table th:last-child { text-align: right; }
 .notif-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); display: inline-block; }
+
+.highlight-stats { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.highlight-stats .stat-tile {
+  background: var(--blue-light);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  min-width: 110px;
+}
+.highlight-stats .stat-tile .stat-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+.highlight-stats .stat-tile .stat-value { font-size: 15px; font-weight: 700; color: var(--navy); margin-top: 2px; }
