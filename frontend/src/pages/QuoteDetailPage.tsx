@@ -897,7 +897,6 @@ export function QuoteDetailPage() {
                   {seg.items.map((item) => {
                     const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
                     if (!b || !('yarnCostPerKg' in b)) return null;
-                    const effectiveMargin = line.marginPctOverride ?? quote!.marginPctOverride ?? quote!.customer.marginPct;
                     const totalLossPct = b.bomMultiplier ? 1 - 1 / b.bomMultiplier : 0;
                     return (
                       <div key={`hl-${item.id}`}>
@@ -910,8 +909,12 @@ export function QuoteDetailPage() {
                             </div>
                           </div>
                           <div className="stat-tile">
-                            <div className="stat-label">Margin</div>
-                            <div className="stat-value">{(effectiveMargin * 100).toFixed(2)}%</div>
+                            <div className="stat-label">Margin %</div>
+                            <div className="stat-value">{((b.marginPct ?? 0) * 100).toFixed(2)}%</div>
+                          </div>
+                          <div className="stat-tile">
+                            <div className="stat-label">Margin % incl. DBK+ROSCTL/RODEP</div>
+                            <div className="stat-value">{((b.effectiveMarginPctInclDbk ?? b.marginPct ?? 0) * 100).toFixed(2)}%</div>
                           </div>
                           <div className="stat-tile">
                             <div className="stat-label">Total BOM (yarn cost/kg)</div>

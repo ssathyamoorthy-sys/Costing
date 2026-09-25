@@ -50,6 +50,12 @@ export interface ItemSheetContext {
   lcInterestPct: number;
   marginPct: number;
   commissionPct: number;
+
+  // Duty Drawback / RoDTEP - an internal profit metric only, never fed into the price
+  // formula below. null when this item has no HSN code chosen.
+  hsnCode: string | null;
+  dbkPct: number;
+  rosctlRodepPct: number;
 }
 
 const LABEL_FONT = { bold: true };
@@ -328,6 +334,24 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 1, 'Margin % (negative adds margin)');
   const marginCell = putPct(r, 2, ctx.marginPct);
   r++;
+
+  // Duty Drawback / RoDTEP - internal profit metric only. These never feed into the
+  // FINAL PRICE formula below; they only compute the effective margin row for reference.
+  put(r, 1, `HSN Code (Duty Drawback)${ctx.hsnCode ? '' : ' - none selected'}`);
+  put(r, 2, ctx.hsnCode ?? '-');
+  r++;
+  put(r, 1, 'DBK %');
+  const dbkCell = putPct(r, 2, ctx.dbkPct);
+  r++;
+  put(r, 1, 'ROSCTL/RODEP %');
+  const rosctlCell = putPct(r, 2, ctx.rosctlRodepPct);
+  r++;
+  put(r, 1, 'Margin % incl. DBK+ROSCTL/RODEP');
+  ws.getCell(r, 1).font = LABEL_FONT;
+  putPct(r, 2, { formula: `${marginCell}+${dbkCell}+${rosctlCell}` } as any);
+  ws.getCell(r, 2).font = LABEL_FONT;
+  r++;
+
   put(r, 1, 'Commission %');
   const commissionCell = putPct(r, 2, ctx.commissionPct);
   r += 1;

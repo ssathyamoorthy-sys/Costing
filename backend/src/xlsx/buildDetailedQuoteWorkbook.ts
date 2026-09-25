@@ -14,6 +14,7 @@ const lineFull = {
       items: {
         include: {
           itemType: true,
+          hsnCode: true,
           accessoryOverrides: { include: { accessoryType: true } },
           packagingCharges: true,
         },
@@ -146,6 +147,9 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
           lcInterestPct: quote.lcInterestPctOverride ?? quote.customer.lcInterestPct,
           marginPct: line.marginPctOverride ?? quote.marginPctOverride ?? quote.customer.marginPct,
           commissionPct: quote.commissionPctOverride ?? quote.customer.commissionPct,
+          hsnCode: item.hsnCode?.hsCode ?? null,
+          dbkPct: item.hsnCode?.dbkPct ?? 0,
+          rosctlRodepPct: item.hsnCode?.rosctlRodepPct ?? 0,
         };
 
         const sheetName = uniqueSheetName(`S${lineIdx + 1}-${item.itemType.name}`);

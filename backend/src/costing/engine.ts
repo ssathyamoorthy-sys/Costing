@@ -100,6 +100,12 @@ export interface CostingBreakup {
   dbkProfitPerKgInr?: number; // totalIncentivePct * finalPricePerKgInr
   profitInclDbkPerKgInr?: number;
   profitInclDbk?: Record<string, number>; // per currency, per piece - profit + DBK incentive
+
+  // The plain margin used to price this item, and that margin plus the DBK/ROSCTL
+  // incentive - a display-only figure showing the effective margin once the export
+  // incentive is folded in. Never fed back into the pricing formula above.
+  marginPct?: number;
+  effectiveMarginPctInclDbk?: number;
 }
 
 const pct = (v: number) => v; // fractions are already 0-1, kept as a named no-op for clarity at call sites

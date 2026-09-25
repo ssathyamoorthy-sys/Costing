@@ -218,7 +218,17 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         ...itemInput,
         pieceWeightGrams: breakup.pieceWeightGrams,
         qtyKg: breakup.qtyKg,
-        breakup: { ...breakup, hsnCode, totalIncentivePct, profitPerKgInr, dbkProfitPerKgInr, profitInclDbkPerKgInr, profitInclDbk },
+        breakup: {
+          ...breakup,
+          hsnCode,
+          totalIncentivePct,
+          profitPerKgInr,
+          dbkProfitPerKgInr,
+          profitInclDbkPerKgInr,
+          profitInclDbk,
+          marginPct,
+          effectiveMarginPctInclDbk: marginPct + totalIncentivePct,
+        },
       });
     }
 

@@ -151,6 +151,8 @@ export interface CostingBreakup {
   dbkProfitPerKgInr?: number;
   profitInclDbkPerKgInr?: number;
   profitInclDbk?: Record<string, number>;
+  marginPct?: number;
+  effectiveMarginPctInclDbk?: number;
 }
 
 export interface QuoteLineSegmentYarn {
