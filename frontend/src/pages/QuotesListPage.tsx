@@ -6,6 +6,21 @@ import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
 
+function statusLabel(status: string) {
+  switch (status) {
+    case 'CONVERTED_TO_ORDER':
+      return 'Converted to Order';
+    case 'LOST_PRICE':
+      return 'Lost - Price';
+    case 'LOST_MOQ':
+      return 'Lost - MOQ';
+    case 'LOST_LEAD_TIME':
+      return 'Lost - Lead Time';
+    default:
+      return status.replace(/_/g, ' ');
+  }
+}
+
 function statusBadgeClass(status: string) {
   switch (status) {
     case 'DRAFT':
@@ -13,10 +28,12 @@ function statusBadgeClass(status: string) {
     case 'PENDING_APPROVAL':
       return 'pending';
     case 'APPROVED':
-    case 'WON':
+    case 'CONVERTED_TO_ORDER':
       return 'approved';
     case 'REJECTED':
-    case 'LOST':
+    case 'LOST_PRICE':
+    case 'LOST_MOQ':
+    case 'LOST_LEAD_TIME':
       return 'rejected';
     case 'SENT':
       return 'sent';
@@ -91,7 +108,7 @@ export function QuotesListPage() {
                 <td>{q.customer?.name}</td>
                 <td className="muted">{q.currency}</td>
                 <td>
-                  <span className={`badge ${statusBadgeClass(q.status)}`}>{q.status.replace('_', ' ')}</span>
+                  <span className={`badge ${statusBadgeClass(q.status)}`}>{statusLabel(q.status)}</span>
                 </td>
                 <td>{q.lines.length}</td>
                 <td className="muted">{q.createdBy?.name}</td>

@@ -90,6 +90,51 @@ async function recomputeLine(quoteLineId: number) {
   return result.warnings;
 }
 
+// Once locked, no price-mutating action is allowed for anyone except Admin (an emergency
+// escape hatch) - the whole point of "Lock & Finalize" is that the negotiated price is
+// irrevocable from here on.
+async function assertNotLocked(quoteId: number, role: string): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId }, select: { locked: true } });
+  if (!quote) return { ok: false, status: 404, error: 'Quote not found' };
+  if (quote.locked && role !== 'ADMIN') {
+    return { ok: false, status: 423, error: 'This quote is locked and finalized - pricing can no longer be changed' };
+  }
+  return { ok: true };
+}
+
+// Snapshots the quote's current pricing (every line's combined rate, plus the quote/line
+// overrides driving it) right before a price-mutating action, but only once the customer
+// has actually seen a price (APPROVED or SENT) - this is how negotiation rounds stay
+// visible as history without needing a separate "start new round" step. A no-op on a
+// DRAFT/PENDING_APPROVAL quote, since nothing has been quoted to the customer yet.
+async function snapshotIfNeeded(quoteId: number, userId: number) {
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId }, include: { lines: true } });
+  if (!quote || quote.locked || !['APPROVED', 'SENT'].includes(quote.status)) return;
+
+  const snapshot = {
+    quote: {
+      marginPctOverride: quote.marginPctOverride,
+      commissionPctOverride: quote.commissionPctOverride,
+      wcInterestPctOverride: quote.wcInterestPctOverride,
+      lcInterestPctOverride: quote.lcInterestPctOverride,
+      currency: quote.currency,
+    },
+    lines: quote.lines.map((l) => ({
+      lineId: l.id,
+      color: l.color,
+      qtySets: l.qtySets,
+      targetPrice: l.targetPrice,
+      marginPctOverride: l.marginPctOverride,
+      ratePerSet: l.costBreakupJson ? (JSON.parse(l.costBreakupJson).ratePerSet ?? null) : null,
+    })),
+  };
+
+  const last = await prisma.quoteRevision.findFirst({ where: { quoteId }, orderBy: { revisionNo: 'desc' } });
+  await prisma.quoteRevision.create({
+    data: { quoteId, revisionNo: (last?.revisionNo ?? 0) + 1, snapshotJson: JSON.stringify(snapshot), createdById: userId },
+  });
+}
+
 const lineFull = {
   segments: {
     orderBy: { sortOrder: 'asc' as const },
@@ -122,7 +167,13 @@ quotesRouter.get('/', async (req, res) => {
 quotesRouter.get('/:id', async (req, res) => {
   const quote = await prisma.quote.findUnique({
     where: { id: Number(req.params.id) },
-    include: { customer: true, createdBy: { select: { name: true } }, approvedBy: { select: { name: true } }, lines: { include: lineFull } },
+    include: {
+      customer: true,
+      createdBy: { select: { name: true } },
+      approvedBy: { select: { name: true } },
+      lockedBy: { select: { name: true } },
+      lines: { include: lineFull },
+    },
   });
   if (!quote) return res.status(404).json({ error: 'Not found' });
   res.json({ ...quote, lines: sanitizeLinesForRole(quote.lines, req.user!.role) });
@@ -338,6 +389,9 @@ quotesRouter.post('/:id/lines', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN
   const check = await assertEditableByOwner(quoteId, req.user!.userId, isSupervisor);
   if (!check.ok) return res.status(check.status).json({ error: check.error });
 
+  const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
   const parsed = lineSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -369,11 +423,16 @@ quotesRouter.put('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISOR',
   const check = await assertEditableByOwner(quoteId, req.user!.userId, isSupervisor);
   if (!check.ok) return res.status(check.status).json({ error: check.error });
 
+  const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
   const parsed = lineSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const existing = await prisma.quoteLine.findUnique({ where: { id: lineId } });
   if (!existing || existing.quoteId !== quoteId) return res.status(404).json({ error: 'Line not found' });
+
+  await snapshotIfNeeded(quoteId, req.user!.userId);
 
   try {
     // Compute against the OLD segments still on file, so segment-level material overrides
@@ -410,6 +469,11 @@ quotesRouter.delete('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISO
   const isSupervisor = req.user!.role === 'SUPERVISOR' || req.user!.role === 'ADMIN';
   const check = await assertEditableByOwner(quoteId, req.user!.userId, isSupervisor);
   if (!check.ok) return res.status(check.status).json({ error: check.error });
+
+  const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
+  await snapshotIfNeeded(quoteId, req.user!.userId);
 
   await prisma.quoteLine.delete({ where: { id: Number(req.params.lineId) } });
   res.status(204).send();
@@ -567,8 +631,13 @@ quotesRouter.post('/:id/segments/:segmentId/material-override', requireRole('SUP
   });
   if (!segment) return res.status(404).json({ error: 'Segment not found' });
 
+  const lockCheck = await assertNotLocked(segment.quoteLine.quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
   const material = await prisma.rawMaterial.findUnique({ where: { id: parsed.data.rawMaterialId } });
   if (!material) return res.status(404).json({ error: 'Raw material not found' });
+
+  await snapshotIfNeeded(segment.quoteLine.quoteId, req.user!.userId);
 
   const existingOverride = await prisma.quoteLineSegmentMaterialOverride.findFirst({
     where: { segmentId, rawMaterialId: parsed.data.rawMaterialId },
@@ -624,6 +693,11 @@ quotesRouter.post('/:id/terms-override', requireRole('SUPERVISOR', 'ADMIN'), asy
   const quote = await prisma.quote.findUnique({ where: { id: quoteId }, include: { lines: true } });
   if (!quote) return res.status(404).json({ error: 'Not found' });
 
+  const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
+  await snapshotIfNeeded(quoteId, req.user!.userId);
+
   await prisma.quote.update({ where: { id: quoteId }, data: parsed.data });
 
   const warnings: string[] = [];
@@ -659,6 +733,11 @@ quotesRouter.post('/:id/lines/:lineId/match-target-price', requireRole('SUPERVIS
   if (!line || line.quoteId !== quoteId) return res.status(404).json({ error: 'Line not found' });
   if (!line.targetPrice || line.targetPrice <= 0) return res.status(422).json({ error: 'This set has no target price set' });
 
+  const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
+  await snapshotIfNeeded(quoteId, req.user!.userId);
+
   const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
   const currentTotal = setRollup?.ratePerSet?.[quote.currency];
   if (currentTotal == null) return res.status(422).json({ error: 'This set has not been priced yet' });
@@ -677,9 +756,15 @@ quotesRouter.post('/:id/lines/:lineId/match-target-price', requireRole('SUPERVIS
 });
 
 quotesRouter.post('/:id/lines/:lineId/clear-margin-override', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const quoteId = Number(req.params.id);
   const lineId = Number(req.params.lineId);
   const line = await prisma.quoteLine.findUnique({ where: { id: lineId } });
-  if (!line || line.quoteId !== Number(req.params.id)) return res.status(404).json({ error: 'Line not found' });
+  if (!line || line.quoteId !== quoteId) return res.status(404).json({ error: 'Line not found' });
+
+  const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
+  await snapshotIfNeeded(quoteId, req.user!.userId);
 
   await prisma.quoteLine.update({ where: { id: lineId }, data: { marginPctOverride: null } });
   const warnings = await recomputeLine(lineId);
@@ -742,9 +827,53 @@ quotesRouter.post('/:id/mark-sent', requireRole('MERCHANDISER', 'SUPERVISOR', 'A
   res.json(await prisma.quote.update({ where: { id: quoteId }, data: { status: 'SENT' } }));
 });
 
+// Supervisor/Admin: final approval of the negotiated price - generates the irrevocable
+// finalReferenceNo (quoteNo itself keeps working through every negotiation round) and
+// freezes every price-mutating action from here on (see assertNotLocked above; Admin can
+// still bypass it as an emergency escape hatch).
+quotesRouter.post('/:id/lock', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const quoteId = Number(req.params.id);
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+  if (quote.locked) return res.status(409).json({ error: 'Quote is already locked' });
+  if (quote.status !== 'SENT') return res.status(409).json({ error: 'Only a quote that has been sent to the customer can be locked' });
+
+  // One last snapshot capturing the price exactly as it stood the moment before lock.
+  await snapshotIfNeeded(quoteId, req.user!.userId);
+
+  const finalReferenceNo = `REF-${new Date().getFullYear()}-${quoteId.toString().padStart(4, '0')}`;
+  const updated = await prisma.quote.update({
+    where: { id: quoteId },
+    data: { locked: true, lockedAt: new Date(), lockedById: req.user!.userId, finalReferenceNo },
+  });
+  await notifyUser(quote.createdById, 'Quote locked & finalized', `Quote #${quote.quoteNo} finalized. Reference #: ${finalReferenceNo}.`);
+  res.json(updated);
+});
+
+quotesRouter.get('/:id/revisions', async (req, res) => {
+  const quoteId = Number(req.params.id);
+  const revisions = await prisma.quoteRevision.findMany({
+    where: { quoteId },
+    orderBy: { revisionNo: 'asc' },
+    include: { createdBy: { select: { name: true } } },
+  });
+  res.json(revisions.map((r) => ({ ...r, snapshot: JSON.parse(r.snapshotJson) })));
+});
+
+const enquiryStatuses = ['CONVERTED_TO_ORDER', 'LOST_PRICE', 'LOST_MOQ', 'LOST_LEAD_TIME'];
+
 quotesRouter.post('/:id/status', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
   const quoteId = Number(req.params.id);
   const status = req.body?.status;
-  if (!['WON', 'LOST'].includes(status)) return res.status(400).json({ error: 'status must be WON or LOST' });
+  if (!enquiryStatuses.includes(status)) {
+    return res.status(400).json({ error: `status must be one of ${enquiryStatuses.join(', ')}` });
+  }
+
+  const isSupervisor = req.user!.role === 'SUPERVISOR' || req.user!.role === 'ADMIN';
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+  if (quote.createdById !== req.user!.userId && !isSupervisor) return res.status(403).json({ error: 'Not your quote' });
+  if (quote.status !== 'SENT') return res.status(409).json({ error: 'Only a quote that has been sent to the customer can get an outcome' });
+
   res.json(await prisma.quote.update({ where: { id: quoteId }, data: { status } }));
 });

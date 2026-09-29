@@ -115,7 +115,16 @@ export interface ExchangeRate {
   createdAt: string;
 }
 
-export type QuoteStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'SENT' | 'WON' | 'LOST';
+export type QuoteStatus =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'SENT'
+  | 'CONVERTED_TO_ORDER'
+  | 'LOST_PRICE'
+  | 'LOST_MOQ'
+  | 'LOST_LEAD_TIME';
 
 export interface CostingBreakup {
   bomMultiplier: number;
@@ -232,9 +241,40 @@ export interface Quote {
   commissionPctOverride?: number | null;
   wcInterestPctOverride?: number | null;
   lcInterestPctOverride?: number | null;
+  locked: boolean;
+  lockedAt?: string | null;
+  lockedBy?: { name: string } | null;
+  finalReferenceNo?: string | null;
   version: number;
   createdAt: string;
   lines: QuoteLine[];
+}
+
+export interface QuoteRevisionSnapshotLine {
+  lineId: number;
+  color: string;
+  qtySets: number;
+  targetPrice: number | null;
+  marginPctOverride: number | null;
+  ratePerSet: Record<string, number> | null;
+}
+export interface QuoteRevisionSnapshot {
+  quote: {
+    marginPctOverride: number | null;
+    commissionPctOverride: number | null;
+    wcInterestPctOverride: number | null;
+    lcInterestPctOverride: number | null;
+    currency: string;
+  };
+  lines: QuoteRevisionSnapshotLine[];
+}
+export interface QuoteRevision {
+  id: number;
+  quoteId: number;
+  revisionNo: number;
+  snapshot: QuoteRevisionSnapshot;
+  createdBy?: { name: string };
+  createdAt: string;
 }
 
 export interface QuoteTemplateSummary {

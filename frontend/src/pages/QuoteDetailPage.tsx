@@ -9,6 +9,7 @@ import type {
   ProcessingCharge,
   Quote,
   QuoteLine,
+  QuoteRevision,
   QuoteTemplate,
   QuoteTemplateGroup,
   QuoteTemplateGroupSummary,
@@ -27,15 +28,32 @@ function statusBadgeClass(status: string) {
     case 'PENDING_APPROVAL':
       return 'pending';
     case 'APPROVED':
-    case 'WON':
+    case 'CONVERTED_TO_ORDER':
       return 'approved';
     case 'REJECTED':
-    case 'LOST':
+    case 'LOST_PRICE':
+    case 'LOST_MOQ':
+    case 'LOST_LEAD_TIME':
       return 'rejected';
     case 'SENT':
       return 'sent';
     default:
       return 'draft';
+  }
+}
+
+function statusLabel(status: string) {
+  switch (status) {
+    case 'CONVERTED_TO_ORDER':
+      return 'Converted to Order';
+    case 'LOST_PRICE':
+      return 'Lost - Price';
+    case 'LOST_MOQ':
+      return 'Lost - MOQ';
+    case 'LOST_LEAD_TIME':
+      return 'Lost - Lead Time';
+    default:
+      return status.replace(/_/g, ' ');
   }
 }
 
@@ -101,6 +119,7 @@ export function QuoteDetailPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [quote, setQuote] = useState<Quote | null>(null);
+  const [revisions, setRevisions] = useState<QuoteRevision[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [itemTypes, setItemTypes] = useState<ItemType[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
@@ -134,6 +153,10 @@ export function QuoteDetailPage() {
       .get<Quote>(`/quotes/${id}`)
       .then(setQuote)
       .catch((e) => setError(e.message));
+    api
+      .get<QuoteRevision[]>(`/quotes/${id}/revisions`)
+      .then(setRevisions)
+      .catch(() => {});
   }
   useEffect(load, [id]);
   useEffect(() => {
@@ -154,7 +177,17 @@ export function QuoteDetailPage() {
   const isOwner = quote.createdById === user?.id;
   const isMerchandiser = user?.role === 'MERCHANDISER' || user?.role === 'ADMIN';
   const isSupervisor = user?.role === 'SUPERVISOR' || user?.role === 'ADMIN';
-  const canEditLines = (quote.status === 'DRAFT' && isOwner && isMerchandiser) || (isSupervisor && ['DRAFT', 'PENDING_APPROVAL'].includes(quote.status));
+  const isAdmin = user?.role === 'ADMIN';
+  // Once locked, pricing is irrevocable for everyone except Admin (emergency escape hatch) -
+  // every price-mutating button in this page is gated on this, matching assertNotLocked
+  // on the backend.
+  const pricingLocked = quote.locked && !isAdmin;
+  // Supervisor can keep negotiating (yarn/margin overrides, line edits) through APPROVED and
+  // SENT - that's the whole point of a negotiation round - right up until the quote is locked.
+  const canEditLines =
+    !pricingLocked &&
+    ((quote.status === 'DRAFT' && isOwner && isMerchandiser) ||
+      (isSupervisor && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'SENT'].includes(quote.status)));
   const currency = quote.currency;
   const symbol = CURRENCY_SYMBOL[currency] || '';
 
@@ -478,7 +511,7 @@ export function QuoteDetailPage() {
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }
-  async function setWonLost(status: 'WON' | 'LOST') {
+  async function setEnquiryStatus(status: 'CONVERTED_TO_ORDER' | 'LOST_PRICE' | 'LOST_MOQ' | 'LOST_LEAD_TIME') {
     try {
       await api.post(`/quotes/${quote!.id}/status`, { status });
       load();
@@ -491,6 +524,21 @@ export function QuoteDetailPage() {
     try {
       await api.del(`/quotes/${quote!.id}`);
       navigate('/quotes');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function lockQuote() {
+    if (
+      !confirm(
+        'Lock & Finalize this quote? A permanent reference number will be generated, and pricing can never be changed again (only an Admin could still touch it). This cannot be undone.',
+      )
+    )
+      return;
+    try {
+      await api.post(`/quotes/${quote!.id}/lock`);
+      load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     }
@@ -580,7 +628,7 @@ export function QuoteDetailPage() {
     <div>
       <div className="toolbar">
         <h2>
-          Quote {quote.quoteNo} <span className={`badge ${statusBadgeClass(quote.status)}`}>{quote.status.replace('_', ' ')}</span>
+          Quote {quote.quoteNo} <span className={`badge ${statusBadgeClass(quote.status)}`}>{statusLabel(quote.status)}</span>
         </h2>
         <div className="tag-row">
           {quote.status === 'DRAFT' && isOwner && isMerchandiser && quote.lines.length > 0 && (
@@ -603,13 +651,24 @@ export function QuoteDetailPage() {
               Mark as sent to customer
             </button>
           )}
-          {quote.status === 'SENT' && (
+          {isSupervisor && quote.status === 'SENT' && !quote.locked && (
+            <button className="btn primary" onClick={lockQuote} title="Generates a permanent reference number and freezes pricing for good">
+              Lock &amp; Finalize
+            </button>
+          )}
+          {quote.status === 'SENT' && (isOwner || isSupervisor) && (
             <>
-              <button className="btn success" onClick={() => setWonLost('WON')}>
-                Mark Won
+              <button className="btn success" onClick={() => setEnquiryStatus('CONVERTED_TO_ORDER')}>
+                Converted to Order
               </button>
-              <button className="btn danger" onClick={() => setWonLost('LOST')}>
-                Mark Lost
+              <button className="btn danger" onClick={() => setEnquiryStatus('LOST_PRICE')}>
+                Lost - Price
+              </button>
+              <button className="btn danger" onClick={() => setEnquiryStatus('LOST_MOQ')}>
+                Lost - MOQ
+              </button>
+              <button className="btn danger" onClick={() => setEnquiryStatus('LOST_LEAD_TIME')}>
+                Lost - Lead Time
               </button>
             </>
           )}
@@ -652,6 +711,32 @@ export function QuoteDetailPage() {
       ))}
       {quote.remarks && <Alert type={quote.status === 'REJECTED' ? 'error' : 'success'}>Remarks: {quote.remarks}</Alert>}
 
+      {quote.locked && (
+        <div className="panel" style={{ background: 'var(--blue-light)', borderColor: 'var(--blue)' }}>
+          <strong>Locked &amp; Finalized</strong> - pricing is irrevocable.
+          <div className="form-grid" style={{ marginTop: 8 }}>
+            <div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                Final Reference #
+              </div>
+              <strong>{quote.finalReferenceNo}</strong>
+            </div>
+            <div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                Locked by
+              </div>
+              {quote.lockedBy?.name ?? '-'}
+            </div>
+            <div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                Locked at
+              </div>
+              {quote.lockedAt ? new Date(quote.lockedAt).toLocaleString() : '-'}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="panel">
         <div className="form-grid">
           <div>
@@ -681,11 +766,44 @@ export function QuoteDetailPage() {
         </div>
       </div>
 
+      {revisions.length > 0 && (
+        <div className="panel">
+          <strong>Negotiation / revision history</strong>
+          <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            A snapshot of the price is saved automatically each time it changes after the customer has been quoted.
+          </p>
+          <table style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th>Rev #</th>
+                <th>When</th>
+                <th>By</th>
+                <th>Sets &amp; prices at that point ({currency})</th>
+              </tr>
+            </thead>
+            <tbody>
+              {revisions.map((r) => (
+                <tr key={r.id}>
+                  <td className="mono">{r.revisionNo}</td>
+                  <td>{new Date(r.createdAt).toLocaleString()}</td>
+                  <td>{r.createdBy?.name ?? '-'}</td>
+                  <td>
+                    {r.snapshot.lines
+                      .map((l) => `${l.color} - ${symbol}${(l.ratePerSet?.[currency] ?? 0).toFixed(4)}`)
+                      .join(', ')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {isSupervisor && (
         <div className="panel">
           <div className="tag-row" style={{ justifyContent: 'space-between' }}>
             <strong>Commercial terms for this quote</strong>
-            {!showTermsEditor && (
+            {!showTermsEditor && !pricingLocked && (
               <button className="btn small" onClick={openTermsEditor}>
                 {[quote.marginPctOverride, quote.commissionPctOverride, quote.wcInterestPctOverride, quote.lcInterestPctOverride].some(
                   (v) => v != null,
@@ -982,16 +1100,18 @@ export function QuoteDetailPage() {
                               <td className="right mono">{c.mixingPct}</td>
                               <td className="right mono">{ov ? `₹${ov.overridePricePerKg} (${ov.reason || 'override'})` : '-'}</td>
                               <td className="right">
-                                <button
-                                  className="btn small"
-                                  onClick={() => {
-                                    setOverrideForSegment(seg.id!);
-                                    setOverrideMaterialId(c.rawMaterialId);
-                                    setOverridePrice(String(ov?.overridePricePerKg ?? ''));
-                                  }}
-                                >
-                                  Override price
-                                </button>
+                                {!pricingLocked && (
+                                  <button
+                                    className="btn small"
+                                    onClick={() => {
+                                      setOverrideForSegment(seg.id!);
+                                      setOverrideMaterialId(c.rawMaterialId);
+                                      setOverridePrice(String(ov?.overridePricePerKg ?? ''));
+                                    }}
+                                  >
+                                    Override price
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           );
@@ -1117,16 +1237,18 @@ export function QuoteDetailPage() {
                     </tr>
                   </tbody>
                 </table>
-                <div className="tag-row" style={{ marginTop: 6 }}>
-                  <button className="btn small" onClick={() => matchTargetPrice(line.id)}>
-                    Match target price
-                  </button>
-                  {line.marginPctOverride != null && (
-                    <button className="btn small" onClick={() => clearLineMarginOverride(line.id)}>
-                      Clear margin override ({(line.marginPctOverride * 100).toFixed(2)}%)
+                {!pricingLocked && (
+                  <div className="tag-row" style={{ marginTop: 6 }}>
+                    <button className="btn small" onClick={() => matchTargetPrice(line.id)}>
+                      Match target price
                     </button>
-                  )}
-                </div>
+                    {line.marginPctOverride != null && (
+                      <button className="btn small" onClick={() => clearLineMarginOverride(line.id)}>
+                        Clear margin override ({(line.marginPctOverride * 100).toFixed(2)}%)
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

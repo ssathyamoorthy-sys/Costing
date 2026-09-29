@@ -30,6 +30,8 @@ model User {
   exchangeRates      ExchangeRate[]
   createdQuotes      Quote[]                     @relation("CreatedQuotes")
   approvedQuotes      Quote[]                    @relation("ApprovedQuotes")
+  lockedQuotes        Quote[]                    @relation("LockedQuotes")
+  quoteRevisions      QuoteRevision[]
   notifications      Notification[]
   quoteTemplates     QuoteTemplate[]
   quoteTemplateGroups QuoteTemplateGroup[]
@@ -213,11 +215,40 @@ model Quote {
   wcInterestPctOverride Float?
   lcInterestPctOverride Float?
 
+  // Set once, by "Lock & Finalize" (Supervisor/Admin), after negotiation with the customer
+  // is done. quoteNo (above) keeps working through every negotiation round; finalReferenceNo
+  // is only generated at lock time and never changes again. Once locked, every price-
+  // mutating action is blocked for everyone except Admin - see assertNotLocked in routes.
+  locked           Boolean   @default(false)
+  lockedAt         DateTime?
+  lockedById       Int?
+  lockedBy         User?     @relation("LockedQuotes", fields: [lockedById], references: [id])
+  finalReferenceNo String?   @unique
+
   version       Int         @default(1)
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
-  lines QuoteLine[]
+  lines     QuoteLine[]
+  revisions QuoteRevision[]
+}
+
+// A point-in-time snapshot of a quote's pricing, taken automatically right before any
+// price-mutating action on a quote that's already been shown to the customer (status
+// APPROVED or SENT) - this is how negotiation rounds ("reduced twice before final approval")
+// stay visible as history, without needing a separate "start new round" step.
+model QuoteRevision {
+  id          Int      @id @default(autoincrement())
+  quoteId     Int
+  quote       Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  revisionNo  Int
+  snapshotJson String  // { lines: [{ lineId, color, qtySets, ratePerSet, targetPrice, marginPctOverride }], quote: { marginPctOverride, commissionPctOverride, wcInterestPctOverride, lcInterestPctOverride, currency } }
+  note        String?
+  createdById Int
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([quoteId, revisionNo])
 }
 
 // A quote line is a "Set": one combined price built from one or more Segments (one per
