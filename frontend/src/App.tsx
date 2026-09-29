@@ -11,6 +11,7 @@ import { ItemTypesPage } from './pages/ItemTypesPage';
 import { ProcessingChargesPage } from './pages/ProcessingChargesPage';
 import { AccessoryTypesPage } from './pages/AccessoryTypesPage';
 import { HsnCodesPage } from './pages/HsnCodesPage';
+import { ReportsPage } from './pages/ReportsPage';
 import { ExchangeRatesPage } from './pages/ExchangeRatesPage';
 import { GeneralSettingsPage } from './pages/GeneralSettingsPage';
 import { QuotesListPage } from './pages/QuotesListPage';
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/processing-charges" element={<ProcessingChargesPage />} />
         <Route path="/accessory-types" element={<AccessoryTypesPage />} />
         <Route path="/hsn-codes" element={<HsnCodesPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
         <Route path="/exchange-rates" element={<ExchangeRatesPage />} />
         <Route path="/general-settings" element={<GeneralSettingsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />

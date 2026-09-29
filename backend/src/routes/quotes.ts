@@ -783,7 +783,7 @@ quotesRouter.post('/:id/submit', requireRole('MERCHANDISER', 'ADMIN'), async (re
   if (quote.status !== 'DRAFT') return res.status(409).json({ error: `Quote is already ${quote.status}` });
   if (quote.lines.length === 0) return res.status(422).json({ error: 'Add at least one line before submitting' });
 
-  const updated = await prisma.quote.update({ where: { id: quoteId }, data: { status: 'PENDING_APPROVAL' } });
+  const updated = await prisma.quote.update({ where: { id: quoteId }, data: { status: 'PENDING_APPROVAL', submittedAt: new Date() } });
   await notifyRole('SUPERVISOR', 'Quote pending approval', `Quote #${quote.quoteNo} submitted by merchandiser for approval.`);
   res.json(updated);
 });
@@ -824,7 +824,7 @@ quotesRouter.post('/:id/mark-sent', requireRole('MERCHANDISER', 'SUPERVISOR', 'A
   const quote = await prisma.quote.findUnique({ where: { id: quoteId } });
   if (!quote) return res.status(404).json({ error: 'Not found' });
   if (quote.status !== 'APPROVED') return res.status(409).json({ error: 'Only approved quotes can be marked sent' });
-  res.json(await prisma.quote.update({ where: { id: quoteId }, data: { status: 'SENT' } }));
+  res.json(await prisma.quote.update({ where: { id: quoteId }, data: { status: 'SENT', sentAt: new Date() } }));
 });
 
 // Supervisor/Admin: final approval of the negotiated price - generates the irrevocable

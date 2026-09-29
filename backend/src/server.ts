@@ -15,6 +15,7 @@ import { exchangeRatesRouter } from './routes/exchangeRates';
 import { quotesRouter } from './routes/quotes';
 import { quoteTemplatesRouter } from './routes/quoteTemplates';
 import { quoteTemplateGroupsRouter } from './routes/quoteTemplateGroups';
+import { reportsRouter } from './routes/reports';
 import { notificationsRouter } from './routes/notifications';
 import { generalSettingsRouter } from './routes/generalSettings';
 
@@ -36,6 +37,7 @@ app.use('/api/exchange-rates', exchangeRatesRouter);
 app.use('/api/quotes', quotesRouter);
 app.use('/api/quote-templates', quoteTemplatesRouter);
 app.use('/api/quote-template-groups', quoteTemplateGroupsRouter);
+app.use('/api/reports', reportsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/general-settings', generalSettingsRouter);
 

@@ -16,6 +16,7 @@ const NAV: { to: string; label: string; roles: Role[] }[] = [
   { to: '/hsn-codes', label: 'HSN Master (DBK/ROSCTL)', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/exchange-rates', label: 'Exchange Rates', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/general-settings', label: 'General Mapping', roles: ['ADMIN', 'SUPERVISOR'] },
+  { to: '/reports', label: 'Reports', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/notifications', label: 'Notifications', roles: ['ADMIN', 'SUPERVISOR', 'PURCHASE', 'MERCHANDISER'] },
 ];
 

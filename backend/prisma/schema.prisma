@@ -199,6 +199,10 @@ model Quote {
   approvedById  Int?
   approvedBy    User?       @relation("ApprovedQuotes", fields: [approvedById], references: [id])
   approvedAt    DateTime?
+  // Timeline timestamps for reporting (turnaround times) - set once, when the quote first
+  // enters that stage.
+  submittedAt   DateTime?
+  sentAt        DateTime?
   remarks       String?
   validityDate  DateTime?
   paymentTerms  String?
