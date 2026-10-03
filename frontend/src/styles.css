@@ -97,7 +97,7 @@ tr:hover td { background: var(--blue-light); }
 .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn.danger:hover { background: #a3352a; }
 .btn.success { background: var(--success); border-color: var(--success); color: #fff; }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled, .btn.disabled { opacity: 0.5; cursor: not-allowed; }
 .btn.small { padding: 4px 10px; font-size: 12px; }
 
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }

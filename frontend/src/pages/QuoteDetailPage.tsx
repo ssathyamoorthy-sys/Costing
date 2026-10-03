@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError, openBinary } from '../api';
+import { api, ApiError, openBinary, uploadFile } from '../api';
 import type {
   CostingBreakup,
   HsnCode,
@@ -127,6 +127,8 @@ export function QuoteDetailPage() {
   const [colors, setColors] = useState<ProcessingCharge[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
   const [showForm, setShowForm] = useState(false);
@@ -565,6 +567,40 @@ export function QuoteDetailPage() {
     }
   }
 
+  async function handleCostSheetUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setImporting(true);
+    setImportMessage(null);
+    setError(null);
+    try {
+      const result = await uploadFile<{
+        changed: boolean;
+        materialsUpdated?: number;
+        marginsUpdated?: number;
+        commercialTermsUpdated?: string[];
+        warnings: string[];
+      }>(`/quotes/${quote!.id}/import-costsheet`, file);
+
+      if (result.changed) {
+        const parts: string[] = [];
+        if (result.materialsUpdated) parts.push(`${result.materialsUpdated} yarn price(s)`);
+        if (result.marginsUpdated) parts.push(`${result.marginsUpdated} set margin(s)`);
+        if (result.commercialTermsUpdated?.length) parts.push(`commercial terms (${result.commercialTermsUpdated.join(', ')})`);
+        setImportMessage(`Updated from cost sheet: ${parts.join(', ') || 'quote recalculated'}.`);
+      } else {
+        setImportMessage("Nothing changed - the file matched what's already on the quote.");
+      }
+      setWarnings(result.warnings || []);
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function applyLineMarginOverride(lineId: number) {
     if (marginInputPct === '') return;
     try {
@@ -702,6 +738,12 @@ export function QuoteDetailPage() {
               Download Excel (with formulas)
             </button>
           )}
+          {isSupervisor && !pricingLocked && (
+            <label className={`btn${importing ? ' disabled' : ''}`} style={{ cursor: importing ? 'default' : 'pointer' }}>
+              {importing ? 'Uploading...' : 'Upload revised cost sheet'}
+              <input type="file" accept=".xlsx" onChange={handleCostSheetUpload} disabled={importing} style={{ display: 'none' }} />
+            </label>
+          )}
           {canEditLines && quote.lines.length > 0 && (
             <button className="btn" onClick={saveQuoteAsTemplateGroup} title="Save every set in this quote as one named, reusable recipe">
               Save quote as template
@@ -719,6 +761,7 @@ export function QuoteDetailPage() {
       </div>
 
       {error && <Alert type="error">{error}</Alert>}
+      {importMessage && <Alert type="success">{importMessage}</Alert>}
       {warnings.map((w, i) => (
         <Alert key={i} type="warning">
           {w}

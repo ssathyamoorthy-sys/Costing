@@ -1,13 +1,19 @@
 import { Router } from 'express';
+import multer from 'multer';
+import ExcelJS from 'exceljs';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { computeSet, type SegmentInput } from '../costing/computeSet';
+import { resolveCurrentRate } from '../lib/rates';
 import { notifyRole, notifyUser } from '../lib/notify';
 import { generateQuotePdf } from '../pdf/quotePdf';
 import { buildWorkbook } from '../xlsx/helpers';
 import { buildDetailedQuoteWorkbook } from '../xlsx/buildDetailedQuoteWorkbook';
+import { parseCostSheetWorkbook } from '../xlsx/importCostSheet';
 import type { CostingBreakup } from '../costing/engine';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 export const quotesRouter = Router();
 quotesRouter.use(requireAuth);
@@ -271,6 +277,163 @@ quotesRouter.get('/:id/xlsx-detailed', requireRole('SUPERVISOR', 'ADMIN'), async
   res.setHeader('Content-Disposition', `attachment; filename="${quote.quoteNo}-detailed.xlsx"`);
   await wb.xlsx.write(res);
   res.end();
+});
+
+// Supervisor/Admin: re-upload a previously downloaded "Download Excel (with formulas)"
+// cost sheet after editing it, applying any changed yarn prices, per-Set margin, and
+// (if consistent across every sheet) quote-wide commission/WC/LC interest. Everything else
+// in the sheet - the BOM chain, cost stack, final price formulas - is read-only and
+// ignored; the server always recomputes the price fresh through the normal costing engine,
+// so an edited formula cell or a reordered row can never feed a stale number back in.
+quotesRouter.post('/:id/import-costsheet', requireRole('SUPERVISOR', 'ADMIN'), upload.single('file'), async (req, res) => {
+  const quoteId = Number(req.params.id);
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded (field name must be "file")' });
+
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId }, include: { customer: true, lines: { include: lineFull } } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+
+  const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
+  const wb = new ExcelJS.Workbook();
+  try {
+    await wb.xlsx.load(req.file.buffer as any);
+  } catch {
+    return res.status(400).json({ error: 'Could not read this file as an Excel workbook' });
+  }
+  const parsedSheets = parseCostSheetWorkbook(wb);
+
+  const warnings: string[] = [];
+  const materialChanges: { segmentId: number; rawMaterialId: number; materialCode: string; price: number; sheetName: string }[] = [];
+  const marginChanges = new Map<number, number>(); // lineId -> new marginPctOverride
+  const commissionValues = new Set<number>();
+  const wcValues = new Set<number>();
+  const lcValues = new Set<number>();
+  const affectedLineIds = new Set<number>();
+
+  for (const sheet of parsedSheets) {
+    if (sheet.quoteNoInSheet && sheet.quoteNoInSheet !== quote.quoteNo) {
+      warnings.push(`Sheet "${sheet.sheetName}": belongs to quote ${sheet.quoteNoInSheet}, not this one (${quote.quoteNo}) - skipped.`);
+      continue;
+    }
+    if (!sheet.setNo || sheet.setNo < 1 || sheet.setNo > quote.lines.length) {
+      warnings.push(`Sheet "${sheet.sheetName}": can't tell which Set this belongs to - skipped.`);
+      continue;
+    }
+    const line = quote.lines[sheet.setNo - 1];
+
+    const candidates = line.segments.flatMap((seg) => seg.items.map((item) => ({ seg, item })));
+    let matched = candidates.find(
+      ({ item }) =>
+        item.itemType.name === sheet.itemTypeNameFromSheetName &&
+        item.lengthCm === sheet.lengthCm &&
+        item.widthCm === sheet.widthCm &&
+        item.gsm === sheet.gsm,
+    );
+    if (!matched) {
+      matched = candidates.find(({ item }) => item.itemType.name === sheet.itemTypeNameFromSheetName);
+      if (matched) warnings.push(`Sheet "${sheet.sheetName}": size doesn't match this item anymore - prices applied anyway, size left as-is.`);
+    }
+    if (!matched) {
+      warnings.push(`Sheet "${sheet.sheetName}": couldn't match this to an item in Set #${sheet.setNo} - skipped.`);
+      continue;
+    }
+    const { seg } = matched;
+    affectedLineIds.add(line.id);
+
+    for (const yarnRow of sheet.yarnRows) {
+      const component = seg.yarnComponents.find((c) => c.rawMaterial.code === yarnRow.materialCode);
+      if (!component) {
+        warnings.push(`Sheet "${sheet.sheetName}": material "${yarnRow.materialCode}" isn't part of this segment's recipe - ignored.`);
+        continue;
+      }
+      const existingOverride = seg.materialOverrides.find((o) => o.rawMaterialId === component.rawMaterialId);
+      const masterRate = existingOverride ? null : await resolveCurrentRate(component.rawMaterialId);
+      const currentEffective = existingOverride?.overridePricePerKg ?? masterRate?.pricePerKg ?? null;
+      if (currentEffective == null || Math.abs(currentEffective - yarnRow.pricePerKg) > 0.0001) {
+        materialChanges.push({ segmentId: seg.id, rawMaterialId: component.rawMaterialId, materialCode: yarnRow.materialCode, price: yarnRow.pricePerKg, sheetName: sheet.sheetName });
+      }
+    }
+
+    if (sheet.marginPct != null) {
+      const currentMargin = line.marginPctOverride ?? quote.marginPctOverride ?? quote.customer.marginPct;
+      if (Math.abs(currentMargin - sheet.marginPct) > 0.0001) marginChanges.set(line.id, sheet.marginPct);
+    }
+    if (sheet.commissionPct != null) commissionValues.add(Math.round(sheet.commissionPct * 1e6) / 1e6);
+    if (sheet.wcInterestPct != null) wcValues.add(Math.round(sheet.wcInterestPct * 1e6) / 1e6);
+    if (sheet.lcInterestPct != null) lcValues.add(Math.round(sheet.lcInterestPct * 1e6) / 1e6);
+  }
+
+  const quoteUpdate: { commissionPctOverride?: number; wcInterestPctOverride?: number; lcInterestPctOverride?: number } = {};
+  const currentCommission = quote.commissionPctOverride ?? quote.customer.commissionPct;
+  const currentWc = quote.wcInterestPctOverride ?? quote.customer.wcInterestPct;
+  const currentLc = quote.lcInterestPctOverride ?? quote.customer.lcInterestPct;
+  if (commissionValues.size === 1) {
+    const [v] = commissionValues;
+    if (Math.abs(currentCommission - v) > 0.0001) quoteUpdate.commissionPctOverride = v;
+  } else if (commissionValues.size > 1) {
+    warnings.push('Commission % differs across sheets - left unchanged. Edit it from the Commercial terms panel instead.');
+  }
+  if (wcValues.size === 1) {
+    const [v] = wcValues;
+    if (Math.abs(currentWc - v) > 0.0001) quoteUpdate.wcInterestPctOverride = v;
+  } else if (wcValues.size > 1) {
+    warnings.push('W.C. Interest % differs across sheets - left unchanged.');
+  }
+  if (lcValues.size === 1) {
+    const [v] = lcValues;
+    if (Math.abs(currentLc - v) > 0.0001) quoteUpdate.lcInterestPctOverride = v;
+  } else if (lcValues.size > 1) {
+    warnings.push('LC Interest % differs across sheets - left unchanged.');
+  }
+
+  if (materialChanges.length === 0 && marginChanges.size === 0 && Object.keys(quoteUpdate).length === 0) {
+    return res.json({ changed: false, warnings: warnings.length ? warnings : ['Nothing in this file differs from the current quote.'] });
+  }
+
+  await snapshotIfNeeded(quoteId, req.user!.userId);
+
+  for (const change of materialChanges) {
+    const existing = await prisma.quoteLineSegmentMaterialOverride.findFirst({
+      where: { segmentId: change.segmentId, rawMaterialId: change.rawMaterialId },
+    });
+    if (existing) {
+      await prisma.quoteLineSegmentMaterialOverride.update({
+        where: { id: existing.id },
+        data: { overridePricePerKg: change.price, reason: 'Updated via Excel cost sheet re-upload', setById: req.user!.userId },
+      });
+    } else {
+      await prisma.quoteLineSegmentMaterialOverride.create({
+        data: {
+          segmentId: change.segmentId,
+          rawMaterialId: change.rawMaterialId,
+          overridePricePerKg: change.price,
+          reason: 'Updated via Excel cost sheet re-upload',
+          setById: req.user!.userId,
+        },
+      });
+    }
+  }
+  for (const [lineId, marginPct] of marginChanges) {
+    await prisma.quoteLine.update({ where: { id: lineId }, data: { marginPctOverride: marginPct } });
+  }
+  if (Object.keys(quoteUpdate).length > 0) {
+    await prisma.quote.update({ where: { id: quoteId }, data: quoteUpdate });
+  }
+
+  const recomputeWarnings: string[] = [];
+  for (const lineId of affectedLineIds) {
+    const w = await recomputeLine(lineId);
+    if (w) recomputeWarnings.push(...w);
+  }
+
+  res.json({
+    changed: true,
+    materialsUpdated: materialChanges.length,
+    marginsUpdated: marginChanges.size,
+    commercialTermsUpdated: Object.keys(quoteUpdate),
+    warnings: [...warnings, ...recomputeWarnings],
+  });
 });
 
 // Supervisor/Admin only: permanently remove a quote (cascades to its lines/segments/items).
