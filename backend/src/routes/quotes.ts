@@ -755,6 +755,31 @@ quotesRouter.post('/:id/lines/:lineId/match-target-price', requireRole('SUPERVIS
   res.json({ line: sanitizeLineForRole(updatedLine, req.user!.role), marginPctOverride: requiredMargin, warnings });
 });
 
+// Supervisor: set this Set's margin directly, without needing a target price first - the
+// straightforward "just tell me the margin" counterpart to match-target-price above.
+const marginOverrideSchema = z.object({ marginPctOverride: z.number() });
+
+quotesRouter.post('/:id/lines/:lineId/margin-override', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const quoteId = Number(req.params.id);
+  const lineId = Number(req.params.lineId);
+  const parsed = marginOverrideSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const line = await prisma.quoteLine.findUnique({ where: { id: lineId } });
+  if (!line || line.quoteId !== quoteId) return res.status(404).json({ error: 'Line not found' });
+
+  const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
+  await snapshotIfNeeded(quoteId, req.user!.userId);
+
+  await prisma.quoteLine.update({ where: { id: lineId }, data: { marginPctOverride: parsed.data.marginPctOverride } });
+  const warnings = await recomputeLine(lineId);
+
+  const updatedLine = await prisma.quoteLine.findUniqueOrThrow({ where: { id: lineId }, include: lineFull });
+  res.json({ line: sanitizeLineForRole(updatedLine, req.user!.role), warnings });
+});
+
 quotesRouter.post('/:id/lines/:lineId/clear-margin-override', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
   const quoteId = Number(req.params.id);
   const lineId = Number(req.params.lineId);

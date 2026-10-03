@@ -145,6 +145,9 @@ export function QuoteDetailPage() {
   const [overridePrice, setOverridePrice] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
 
+  const [editMarginForLine, setEditMarginForLine] = useState<number | null>(null);
+  const [marginInputPct, setMarginInputPct] = useState('');
+
   const [showTermsEditor, setShowTermsEditor] = useState(false);
   const [termsForm, setTermsForm] = useState({ marginPct: '', commissionPct: '', wcInterestPct: '', lcInterestPct: '' });
 
@@ -556,6 +559,18 @@ export function QuoteDetailPage() {
   async function clearLineMarginOverride(lineId: number) {
     try {
       await api.post(`/quotes/${quote!.id}/lines/${lineId}/clear-margin-override`);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function applyLineMarginOverride(lineId: number) {
+    if (marginInputPct === '') return;
+    try {
+      await api.post(`/quotes/${quote!.id}/lines/${lineId}/margin-override`, { marginPctOverride: Number(marginInputPct) / 100 });
+      setEditMarginForLine(null);
+      setMarginInputPct('');
       load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -1086,6 +1101,7 @@ export function QuoteDetailPage() {
                           <th>Slot</th>
                           <th>Material</th>
                           <th className="right">Mixing %</th>
+                          <th className="right">Current Price (₹/kg)</th>
                           <th className="right">Override</th>
                           <th></th>
                         </tr>
@@ -1093,11 +1109,14 @@ export function QuoteDetailPage() {
                       <tbody>
                         {seg.yarnComponents.map((c) => {
                           const ov = seg.materialOverrides?.find((o) => o.rawMaterialId === c.rawMaterialId);
+                          const masterRate = rawMaterials.find((m) => m.id === c.rawMaterialId)?.currentRate?.pricePerKg ?? null;
+                          const effectivePrice = ov?.overridePricePerKg ?? masterRate;
                           return (
                             <tr key={c.id}>
                               <td>{c.slot}</td>
                               <td>{c.rawMaterial?.code}</td>
                               <td className="right mono">{c.mixingPct}</td>
+                              <td className="right mono">{effectivePrice != null ? `₹${effectivePrice}` : '-'}</td>
                               <td className="right mono">{ov ? `₹${ov.overridePricePerKg} (${ov.reason || 'override'})` : '-'}</td>
                               <td className="right">
                                 {!pricingLocked && (
@@ -1106,7 +1125,7 @@ export function QuoteDetailPage() {
                                     onClick={() => {
                                       setOverrideForSegment(seg.id!);
                                       setOverrideMaterialId(c.rawMaterialId);
-                                      setOverridePrice(String(ov?.overridePricePerKg ?? ''));
+                                      setOverridePrice(String(ov?.overridePricePerKg ?? masterRate ?? ''));
                                     }}
                                   >
                                     Override price
@@ -1214,6 +1233,55 @@ export function QuoteDetailPage() {
               </tbody>
             </table>
 
+            {isSupervisor && (
+              <div style={{ marginTop: 8 }}>
+                <div className="tag-row" style={{ alignItems: 'center' }}>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    Margin for this set:{' '}
+                    {line.marginPctOverride != null ? (
+                      <strong>{(line.marginPctOverride * 100).toFixed(2)}% (override)</strong>
+                    ) : (
+                      'using quote/customer default'
+                    )}
+                  </span>
+                  {!pricingLocked && editMarginForLine !== line.id && (
+                    <button
+                      className="btn small"
+                      onClick={() => {
+                        setEditMarginForLine(line.id);
+                        setMarginInputPct(line.marginPctOverride != null ? String(line.marginPctOverride * 100) : '');
+                      }}
+                    >
+                      Set margin %
+                    </button>
+                  )}
+                  {!pricingLocked && line.marginPctOverride != null && (
+                    <button className="btn small" onClick={() => clearLineMarginOverride(line.id)}>
+                      Clear override
+                    </button>
+                  )}
+                </div>
+                {editMarginForLine === line.id && (
+                  <div className="tag-row" style={{ marginTop: 6 }}>
+                    <input
+                      type="number"
+                      step="0.01"
+                      style={{ maxWidth: 120 }}
+                      value={marginInputPct}
+                      onChange={(e) => setMarginInputPct(e.target.value)}
+                      placeholder="Margin %"
+                    />
+                    <button className="btn primary small" onClick={() => applyLineMarginOverride(line.id)}>
+                      Apply
+                    </button>
+                    <button className="btn small" onClick={() => setEditMarginForLine(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {isSupervisor && line.targetPrice != null && (
               <div style={{ marginTop: 8 }}>
                 <table>
@@ -1242,11 +1310,6 @@ export function QuoteDetailPage() {
                     <button className="btn small" onClick={() => matchTargetPrice(line.id)}>
                       Match target price
                     </button>
-                    {line.marginPctOverride != null && (
-                      <button className="btn small" onClick={() => clearLineMarginOverride(line.id)}>
-                        Clear margin override ({(line.marginPctOverride * 100).toFixed(2)}%)
-                      </button>
-                    )}
                   </div>
                 )}
               </div>
