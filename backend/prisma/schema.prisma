@@ -218,6 +218,9 @@ model Quote {
   commissionPctOverride Float?
   wcInterestPctOverride Float?
   lcInterestPctOverride Float?
+  // Overrides the "freightExportPerKg" General Mapping setting (a single global default
+  // used by every quote) for this quote only.
+  freightExportPerKgOverride Float?
 
   // Set once, by "Lock & Finalize" (Supervisor/Admin), after negotiation with the customer
   // is done. quoteNo (above) keeps working through every negotiation round; finalReferenceNo
@@ -274,6 +277,11 @@ model QuoteLine {
   // hit a specific Set's target without moving the price of any other Set in the quote.
   marginPctOverride Float?
 
+  // Overrides the Processing Charge master (looked up by this Set's color) for this Set
+  // only - never changes the shared master, so other quotes using the same color are
+  // unaffected.
+  processingChargeRatePerKgOverride Float?
+
   // Rollup of the combined set (sum of all segment-items' piece price * qty-in-set),
   // in INR and the quote's currency - the authoritative per-item figures live on
   // QuoteLineSegmentItem. { ratePerSet: Record<currency, number> }
@@ -289,6 +297,13 @@ model QuoteLineSegment {
   productId   Int
   product     Product   @relation(fields: [productId], references: [id])
   sortOrder   Int       @default(0)
+
+  // Overrides the Product master's process-cost fields for this Set's segment only - never
+  // changes the shared Product record, so other quotes using the same Product are unaffected.
+  weavingSizingCostPerKgOverride Float?
+  firstVelourChargesOverride     Float?
+  secondVelourChargesOverride    Float?
+  transportLocalPerKgOverride    Float?
 
   // Yarn recipe for this segment - pre-filled from the Product's default recipe when the
   // segment is created, then freely editable by the merchandiser for this quote only.
@@ -322,6 +337,12 @@ model QuoteLineSegmentItem {
   // quote-creation time - drives the internal "Profit incl. DBK" figure (Supervisor-only).
   hsnCodeId  Int?
   hsnCode    HsnCode?         @relation(fields: [hsnCodeId], references: [id])
+
+  // Overrides the Item Type master's stitching/packing cost for this item only - never
+  // changes the shared Item Type record, so other quotes using the same item type are
+  // unaffected.
+  stitchingCostPerKgOverride Float?
+  packingCostPerKgOverride   Float?
 
   pieceWeightGrams Float?
   qtyKg            Float?     // pieceWeightGrams * qtyPerSet / 1000 - one set's worth

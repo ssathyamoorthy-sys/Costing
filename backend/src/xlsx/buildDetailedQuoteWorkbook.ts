@@ -36,7 +36,8 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
   if (!quote) return null;
 
   const freightSetting = await prisma.generalSetting.findUnique({ where: { key: 'freightExportPerKg' } });
-  const freightExportPerKg = freightSetting ? Number(freightSetting.value) : 0;
+  const masterFreightExportPerKg = freightSetting ? Number(freightSetting.value) : 0;
+  const freightExportPerKg = quote.freightExportPerKgOverride ?? masterFreightExportPerKg;
 
   const allRates = await getCurrentExchangeRates();
   const exchangeRateToInr = quote.currency === 'INR' ? 1 : allRates[quote.currency] ?? 1;
@@ -72,6 +73,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
   for (let lineIdx = 0; lineIdx < quote.lines.length; lineIdx++) {
     const line = quote.lines[lineIdx];
     const processingCharge = await prisma.processingCharge.findFirst({ where: { color: { equals: line.color } } });
+    const processingChargeRatePerKg = line.processingChargeRatePerKgOverride ?? processingCharge?.ratePerKg ?? 0;
 
     for (const seg of line.segments) {
       const materialOverrideByRawMaterialId = new Map(seg.materialOverrides.map((o) => [o.rawMaterialId, o]));
@@ -134,13 +136,13 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
           secondVelourLossPct: seg.product.secondVelourLossPct,
           rejectionPct: seg.product.rejectionPct,
           yarnRows,
-          weavingSizingCostPerKg: seg.product.weavingSizingCostPerKg,
-          firstVelourCharges: seg.product.firstVelourCharges,
-          processingChargeRatePerKg: processingCharge?.ratePerKg ?? 0,
-          secondVelourCharges: seg.product.secondVelourCharges,
-          transportLocalPerKg: seg.product.transportLocalPerKg,
-          stitchingCostPerKg: item.itemType.stitchingCostPerKg,
-          packingCostPerKg: item.itemType.packingCostPerKg,
+          weavingSizingCostPerKg: seg.weavingSizingCostPerKgOverride ?? seg.product.weavingSizingCostPerKg,
+          firstVelourCharges: seg.firstVelourChargesOverride ?? seg.product.firstVelourCharges,
+          processingChargeRatePerKg,
+          secondVelourCharges: seg.secondVelourChargesOverride ?? seg.product.secondVelourCharges,
+          transportLocalPerKg: seg.transportLocalPerKgOverride ?? seg.product.transportLocalPerKg,
+          stitchingCostPerKg: item.stitchingCostPerKgOverride ?? item.itemType.stitchingCostPerKg,
+          packingCostPerKg: item.packingCostPerKgOverride ?? item.itemType.packingCostPerKg,
           accessoryRows,
           freightExportPerKg,
           wcInterestPct: quote.wcInterestPctOverride ?? quote.customer.wcInterestPct,

@@ -20,6 +20,9 @@ export interface ItemInput {
   hsnCodeId?: number | null;
   accessoryOverrides?: ItemAccessoryOverrideInput[];
   packagingCharges?: ItemPackagingChargeInput[];
+  // Per-item overrides of the Item Type master's stitching/packing cost - see schema.prisma.
+  stitchingCostPerKgOverride?: number | null;
+  packingCostPerKgOverride?: number | null;
 }
 export interface SegmentYarnInput {
   slot: string;
@@ -75,15 +78,18 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
   const marginPct = line?.marginPctOverride ?? quote.marginPctOverride ?? customer.marginPct;
 
   const freightSetting = await prisma.generalSetting.findUnique({ where: { key: 'freightExportPerKg' } });
-  const freightExportPerKg = freightSetting ? Number(freightSetting.value) : 0;
+  const masterFreightExportPerKg = freightSetting ? Number(freightSetting.value) : 0;
   if (!freightSetting) {
     warnings.push('No "freightExportPerKg" general setting configured yet - export freight costed as 0/kg.');
   }
+  const freightExportPerKg = quote.freightExportPerKgOverride ?? masterFreightExportPerKg;
 
   const processingCharge = await prisma.processingCharge.findFirst({ where: { color: { equals: input.color } } });
   if (!processingCharge) {
     throw new Error(`No processing charge configured for color "${input.color}". Add it in General Mapping first.`);
   }
+  // Per-Set override wins over the Processing Charge master (see schema.prisma).
+  const processingChargeRatePerKg = line?.processingChargeRatePerKgOverride ?? processingCharge.ratePerKg;
 
   const allRates = await getCurrentExchangeRates();
   const exchangeRates: Record<string, number> = { INR: 1 };
@@ -119,6 +125,11 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
     const overrideByMaterialId = new Map(
       (matchedExisting?.materialOverrides ?? []).map((o) => [o.rawMaterialId, o.overridePricePerKg]),
     );
+    // Per-segment overrides win over the Product master (see schema.prisma).
+    const weavingSizingCostPerKg = matchedExisting?.weavingSizingCostPerKgOverride ?? product.weavingSizingCostPerKg;
+    const firstVelourCharges = matchedExisting?.firstVelourChargesOverride ?? product.firstVelourCharges;
+    const secondVelourCharges = matchedExisting?.secondVelourChargesOverride ?? product.secondVelourCharges;
+    const transportLocalPerKg = matchedExisting?.transportLocalPerKgOverride ?? product.transportLocalPerKg;
 
     const mixingTotal = segInput.yarnComponents.reduce((s, c) => s + c.mixingPct, 0);
     if (Math.abs(mixingTotal - 100) > 0.5) {
@@ -178,18 +189,18 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
 
       const breakup = computeCosting({
         weavingWastagePct: product.weavingWastagePct,
-        weavingSizingCostPerKg: product.weavingSizingCostPerKg,
-        firstVelourCharges: product.firstVelourCharges,
+        weavingSizingCostPerKg,
+        firstVelourCharges,
         firstVelourLossPct: product.firstVelourLossPct,
-        secondVelourCharges: product.secondVelourCharges,
+        secondVelourCharges,
         secondVelourLossPct: product.secondVelourLossPct,
         weightLossPct: product.weightLossPct,
-        transportLocalPerKg: product.transportLocalPerKg,
+        transportLocalPerKg,
         rejectionPct: product.rejectionPct,
         yarnComponents: resolvedYarn,
-        processingChargeRatePerKg: processingCharge.ratePerKg,
-        stitchingCostPerKg: itemType.stitchingCostPerKg,
-        packingCostPerKg: itemType.packingCostPerKg,
+        processingChargeRatePerKg,
+        stitchingCostPerKg: itemInput.stitchingCostPerKgOverride ?? itemType.stitchingCostPerKg,
+        packingCostPerKg: itemInput.packingCostPerKgOverride ?? itemType.packingCostPerKg,
         accessories: finalAccessories,
         freightExportPerKg,
         wcInterestPct: quote.wcInterestPctOverride ?? customer.wcInterestPct,

@@ -13,7 +13,18 @@ const LABELS = {
   yarnHeaderSlot: 'Slot',
   yarnHeaderMaterial: 'Material',
   yarnStop: 'Mixing % total',
+  weavingSizingCost: 'Weaving + sizing cost / Kg',
+  firstVelourCharges: 'First velour charges / Kg',
+  processingCharge: 'Processing charge / Kg (color)',
+  secondVelourCharges: 'Second velour charges / Kg',
+  transportLocal: 'Local transport / Kg',
+  stitchingCost: 'Stitching cost / Kg',
+  packingCost: 'Packing cost / Kg',
+  accessoryHeaderDescription: 'Description',
+  accessoryHeaderCost: 'Cost / Piece',
+  accessoryStop: 'Accessories cost / piece',
   wcInterest: 'W.C. Interest %',
+  freightExport: 'Export freight / Kg',
   lcInterest: 'LC Interest %',
   margin: 'Margin % (negative adds margin)',
   commission: 'Commission %',
@@ -25,6 +36,11 @@ export interface ParsedYarnRow {
   pricePerKg: number;
 }
 
+export interface ParsedAccessoryRow {
+  name: string;
+  costPerPiece: number;
+}
+
 export interface ParsedItemSheet {
   sheetName: string;
   quoteNoInSheet: string | null;
@@ -34,6 +50,15 @@ export interface ParsedItemSheet {
   widthCm: number | null;
   gsm: number | null;
   yarnRows: ParsedYarnRow[];
+  weavingSizingCostPerKg: number | null;
+  firstVelourCharges: number | null;
+  processingChargeRatePerKg: number | null;
+  secondVelourCharges: number | null;
+  transportLocalPerKg: number | null;
+  stitchingCostPerKg: number | null;
+  packingCostPerKg: number | null;
+  accessoryRows: ParsedAccessoryRow[];
+  freightExportPerKg: number | null;
   marginPct: number | null;
   commissionPct: number | null;
   wcInterestPct: number | null;
@@ -103,6 +128,33 @@ export function parseCostSheetWorkbook(wb: ExcelJS.Workbook): ParsedItemSheet[] 
       }
     }
 
+    const weavingSizingCostRow = findRowByLabel(ws, LABELS.weavingSizingCost);
+    const firstVelourChargesRow = findRowByLabel(ws, LABELS.firstVelourCharges);
+    const processingChargeRow = findRowByLabel(ws, LABELS.processingCharge);
+    const secondVelourChargesRow = findRowByLabel(ws, LABELS.secondVelourCharges);
+    const transportLocalRow = findRowByLabel(ws, LABELS.transportLocal);
+    const stitchingCostRow = findRowByLabel(ws, LABELS.stitchingCost);
+    const packingCostRow = findRowByLabel(ws, LABELS.packingCost);
+
+    const accessoryRows: ParsedAccessoryRow[] = [];
+    let accessoryHeaderRow: number | null = null;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (cellText(ws, r, 1) === LABELS.accessoryHeaderDescription && cellText(ws, r, 2) === LABELS.accessoryHeaderCost) {
+        accessoryHeaderRow = r;
+        break;
+      }
+    }
+    if (accessoryHeaderRow) {
+      for (let r = accessoryHeaderRow + 1; r <= ws.rowCount; r++) {
+        const name = cellText(ws, r, 1);
+        if (!name || name.startsWith(LABELS.accessoryStop)) break;
+        if (name === '(none)') continue;
+        const costPerPiece = cellNumber(ws, r, 2);
+        if (costPerPiece != null) accessoryRows.push({ name, costPerPiece });
+      }
+    }
+
+    const freightRow = findRowByLabel(ws, LABELS.freightExport);
     const marginRow = findRowByLabel(ws, LABELS.margin);
     const commissionRow = findRowByLabel(ws, LABELS.commission);
     const wcRow = findRowByLabel(ws, LABELS.wcInterest);
@@ -117,6 +169,15 @@ export function parseCostSheetWorkbook(wb: ExcelJS.Workbook): ParsedItemSheet[] 
       widthCm: widthRow ? cellNumber(ws, widthRow, 2) : null,
       gsm: gsmRow ? cellNumber(ws, gsmRow, 2) : null,
       yarnRows,
+      weavingSizingCostPerKg: weavingSizingCostRow ? cellNumber(ws, weavingSizingCostRow, 2) : null,
+      firstVelourCharges: firstVelourChargesRow ? cellNumber(ws, firstVelourChargesRow, 2) : null,
+      processingChargeRatePerKg: processingChargeRow ? cellNumber(ws, processingChargeRow, 2) : null,
+      secondVelourCharges: secondVelourChargesRow ? cellNumber(ws, secondVelourChargesRow, 2) : null,
+      transportLocalPerKg: transportLocalRow ? cellNumber(ws, transportLocalRow, 2) : null,
+      stitchingCostPerKg: stitchingCostRow ? cellNumber(ws, stitchingCostRow, 2) : null,
+      packingCostPerKg: packingCostRow ? cellNumber(ws, packingCostRow, 2) : null,
+      accessoryRows,
+      freightExportPerKg: freightRow ? cellNumber(ws, freightRow, 2) : null,
       marginPct: marginRow ? cellNumber(ws, marginRow, 2) : null,
       commissionPct: commissionRow ? cellNumber(ws, commissionRow, 2) : null,
       wcInterestPct: wcRow ? cellNumber(ws, wcRow, 2) : null,

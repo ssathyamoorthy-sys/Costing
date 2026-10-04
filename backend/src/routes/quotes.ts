@@ -70,6 +70,8 @@ async function recomputeLine(quoteLineId: number) {
         hsnCodeId: it.hsnCodeId,
         accessoryOverrides: it.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })),
         packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })),
+        stitchingCostPerKgOverride: it.stitchingCostPerKgOverride,
+        packingCostPerKgOverride: it.packingCostPerKgOverride,
       })),
     })),
   });
@@ -145,7 +147,7 @@ const lineFull = {
   segments: {
     orderBy: { sortOrder: 'asc' as const },
     include: {
-      product: true,
+      product: { include: { accessories: { include: { accessoryType: true } } } },
       yarnComponents: { include: { rawMaterial: true } },
       materialOverrides: { include: { rawMaterial: true } },
       items: {
@@ -303,12 +305,33 @@ quotesRouter.post('/:id/import-costsheet', requireRole('SUPERVISOR', 'ADMIN'), u
   }
   const parsedSheets = parseCostSheetWorkbook(wb);
 
+  const freightSetting = await prisma.generalSetting.findUnique({ where: { key: 'freightExportPerKg' } });
+  const masterFreightExportPerKg = freightSetting ? Number(freightSetting.value) : 0;
+
+  const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+
   const warnings: string[] = [];
   const materialChanges: { segmentId: number; rawMaterialId: number; materialCode: string; price: number; sheetName: string }[] = [];
   const marginChanges = new Map<number, number>(); // lineId -> new marginPctOverride
+  const processingChargeValues = new Map<number, Set<number>>(); // lineId -> values seen across its sheets
   const commissionValues = new Set<number>();
   const wcValues = new Set<number>();
   const lcValues = new Set<number>();
+  const freightValues = new Set<number>();
+  interface SegmentProcessBucket {
+    weaving: Set<number>;
+    firstVelour: Set<number>;
+    secondVelour: Set<number>;
+    transport: Set<number>;
+  }
+  const segmentProcessValues = new Map<number, SegmentProcessBucket>(); // segmentId -> values seen across its items
+  interface ItemProcessUpdate {
+    stitchingCostPerKgOverride?: number;
+    packingCostPerKgOverride?: number;
+  }
+  const itemProcessChanges = new Map<number, ItemProcessUpdate>();
+  const accessoryChanges: { itemId: number; accessoryTypeId: number; costPerPiece: number }[] = [];
+  const packagingChanges: { packagingChargeId: number; ratePerPiece: number }[] = [];
   const affectedLineIds = new Set<number>();
 
   for (const sheet of parsedSheets) {
@@ -338,7 +361,7 @@ quotesRouter.post('/:id/import-costsheet', requireRole('SUPERVISOR', 'ADMIN'), u
       warnings.push(`Sheet "${sheet.sheetName}": couldn't match this to an item in Set #${sheet.setNo} - skipped.`);
       continue;
     }
-    const { seg } = matched;
+    const { seg, item } = matched;
     affectedLineIds.add(line.id);
 
     for (const yarnRow of sheet.yarnRows) {
@@ -359,15 +382,70 @@ quotesRouter.post('/:id/import-costsheet', requireRole('SUPERVISOR', 'ADMIN'), u
       const currentMargin = line.marginPctOverride ?? quote.marginPctOverride ?? quote.customer.marginPct;
       if (Math.abs(currentMargin - sheet.marginPct) > 0.0001) marginChanges.set(line.id, sheet.marginPct);
     }
-    if (sheet.commissionPct != null) commissionValues.add(Math.round(sheet.commissionPct * 1e6) / 1e6);
-    if (sheet.wcInterestPct != null) wcValues.add(Math.round(sheet.wcInterestPct * 1e6) / 1e6);
-    if (sheet.lcInterestPct != null) lcValues.add(Math.round(sheet.lcInterestPct * 1e6) / 1e6);
+    if (sheet.commissionPct != null) commissionValues.add(round6(sheet.commissionPct));
+    if (sheet.wcInterestPct != null) wcValues.add(round6(sheet.wcInterestPct));
+    if (sheet.lcInterestPct != null) lcValues.add(round6(sheet.lcInterestPct));
+    if (sheet.freightExportPerKg != null) freightValues.add(round6(sheet.freightExportPerKg));
+
+    if (sheet.processingChargeRatePerKg != null) {
+      if (!processingChargeValues.has(line.id)) processingChargeValues.set(line.id, new Set());
+      processingChargeValues.get(line.id)!.add(round6(sheet.processingChargeRatePerKg));
+    }
+
+    // Per-segment process costs are shared by every item in the segment - collect every
+    // value seen, then resolve (or warn on conflict) once per segment after the loop.
+    if (sheet.weavingSizingCostPerKg != null || sheet.firstVelourCharges != null || sheet.secondVelourCharges != null || sheet.transportLocalPerKg != null) {
+      if (!segmentProcessValues.has(seg.id)) {
+        segmentProcessValues.set(seg.id, { weaving: new Set(), firstVelour: new Set(), secondVelour: new Set(), transport: new Set() });
+      }
+      const bucket = segmentProcessValues.get(seg.id)!;
+      if (sheet.weavingSizingCostPerKg != null) bucket.weaving.add(round6(sheet.weavingSizingCostPerKg));
+      if (sheet.firstVelourCharges != null) bucket.firstVelour.add(round6(sheet.firstVelourCharges));
+      if (sheet.secondVelourCharges != null) bucket.secondVelour.add(round6(sheet.secondVelourCharges));
+      if (sheet.transportLocalPerKg != null) bucket.transport.add(round6(sheet.transportLocalPerKg));
+    }
+
+    const itemChange: ItemProcessUpdate = {};
+    if (sheet.stitchingCostPerKg != null) {
+      const current = item.stitchingCostPerKgOverride ?? item.itemType.stitchingCostPerKg;
+      if (Math.abs(current - sheet.stitchingCostPerKg) > 0.0001) itemChange.stitchingCostPerKgOverride = sheet.stitchingCostPerKg;
+    }
+    if (sheet.packingCostPerKg != null) {
+      const current = item.packingCostPerKgOverride ?? item.itemType.packingCostPerKg;
+      if (Math.abs(current - sheet.packingCostPerKg) > 0.0001) itemChange.packingCostPerKgOverride = sheet.packingCostPerKg;
+    }
+    if (Object.keys(itemChange).length > 0) itemProcessChanges.set(item.id, itemChange);
+
+    for (const row of sheet.accessoryRows) {
+      const accessoryType = await prisma.accessoryType.findFirst({ where: { name: row.name } });
+      if (accessoryType) {
+        const existingOverride = item.accessoryOverrides.find((o) => o.accessoryTypeId === accessoryType.id);
+        const productDefault = seg.product.accessories.find((a) => a.accessoryTypeId === accessoryType.id);
+        const currentEffective = existingOverride?.costPerPiece ?? productDefault?.costPerPiece ?? null;
+        if (currentEffective == null || Math.abs(currentEffective - row.costPerPiece) > 0.0001) {
+          accessoryChanges.push({ itemId: item.id, accessoryTypeId: accessoryType.id, costPerPiece: row.costPerPiece });
+        }
+        continue;
+      }
+      const packagingCharge = item.packagingCharges.find((p) => p.description === row.name);
+      if (packagingCharge) {
+        if (Math.abs(packagingCharge.ratePerPiece - row.costPerPiece) > 0.0001) {
+          packagingChanges.push({ packagingChargeId: packagingCharge.id, ratePerPiece: row.costPerPiece });
+        }
+        continue;
+      }
+      warnings.push(`Sheet "${sheet.sheetName}": accessory/packaging row "${row.name}" doesn't match anything on this item - add it from the quote screen first, then it can be corrected via Excel.`);
+    }
   }
 
-  const quoteUpdate: { commissionPctOverride?: number; wcInterestPctOverride?: number; lcInterestPctOverride?: number } = {};
+  // Quote-wide fields: compare against the EFFECTIVE current value (override if set, else
+  // the customer/master default), never against raw override-is-null, so an unedited cell
+  // (which always carries the effective value) never creates a spurious override.
+  const quoteUpdate: { commissionPctOverride?: number; wcInterestPctOverride?: number; lcInterestPctOverride?: number; freightExportPerKgOverride?: number } = {};
   const currentCommission = quote.commissionPctOverride ?? quote.customer.commissionPct;
   const currentWc = quote.wcInterestPctOverride ?? quote.customer.wcInterestPct;
   const currentLc = quote.lcInterestPctOverride ?? quote.customer.lcInterestPct;
+  const currentFreight = quote.freightExportPerKgOverride ?? masterFreightExportPerKg;
   if (commissionValues.size === 1) {
     const [v] = commissionValues;
     if (Math.abs(currentCommission - v) > 0.0001) quoteUpdate.commissionPctOverride = v;
@@ -386,8 +464,91 @@ quotesRouter.post('/:id/import-costsheet', requireRole('SUPERVISOR', 'ADMIN'), u
   } else if (lcValues.size > 1) {
     warnings.push('LC Interest % differs across sheets - left unchanged.');
   }
+  if (freightValues.size === 1) {
+    const [v] = freightValues;
+    if (Math.abs(currentFreight - v) > 0.0001) quoteUpdate.freightExportPerKgOverride = v;
+  } else if (freightValues.size > 1) {
+    warnings.push('Export freight / Kg differs across sheets - left unchanged.');
+  }
 
-  if (materialChanges.length === 0 && marginChanges.size === 0 && Object.keys(quoteUpdate).length === 0) {
+  // Set-level: margin (already handled above) plus the processing-charge-by-color override,
+  // which is shared by every segment/item within one Set.
+  const lineUpdates = new Map<number, { marginPctOverride?: number; processingChargeRatePerKgOverride?: number }>();
+  for (const [lineId, marginPct] of marginChanges) {
+    lineUpdates.set(lineId, { ...(lineUpdates.get(lineId) ?? {}), marginPctOverride: marginPct });
+  }
+  for (const [lineId, values] of processingChargeValues) {
+    const line = quote.lines.find((l) => l.id === lineId)!;
+    if (values.size === 1) {
+      const [v] = values;
+      const processingCharge = await prisma.processingCharge.findFirst({ where: { color: line.color } });
+      const currentEffective = line.processingChargeRatePerKgOverride ?? processingCharge?.ratePerKg ?? null;
+      if (currentEffective == null || Math.abs(currentEffective - v) > 0.0001) {
+        lineUpdates.set(lineId, { ...(lineUpdates.get(lineId) ?? {}), processingChargeRatePerKgOverride: v });
+      }
+    } else {
+      warnings.push(`Set #${quote.lines.indexOf(line) + 1}: "Processing charge / Kg (color)" differs across its items - left unchanged.`);
+    }
+  }
+
+  // Segment-level process costs
+  const segmentUpdates = new Map<
+    number,
+    { weavingSizingCostPerKgOverride?: number; firstVelourChargesOverride?: number; secondVelourChargesOverride?: number; transportLocalPerKgOverride?: number }
+  >();
+  for (const [segmentId, bucket] of segmentProcessValues) {
+    const seg = quote.lines.flatMap((l) => l.segments).find((s) => s.id === segmentId)!;
+    const update: {
+      weavingSizingCostPerKgOverride?: number;
+      firstVelourChargesOverride?: number;
+      secondVelourChargesOverride?: number;
+      transportLocalPerKgOverride?: number;
+    } = {};
+    if (bucket.weaving.size === 1) {
+      const [v] = bucket.weaving;
+      const current = seg.weavingSizingCostPerKgOverride ?? seg.product.weavingSizingCostPerKg;
+      if (Math.abs(current - v) > 0.0001) update.weavingSizingCostPerKgOverride = v;
+    } else if (bucket.weaving.size > 1) {
+      warnings.push(`${seg.product.code}: "Weaving + sizing cost / Kg" differs across its items - left unchanged.`);
+    }
+    if (bucket.firstVelour.size === 1) {
+      const [v] = bucket.firstVelour;
+      const current = seg.firstVelourChargesOverride ?? seg.product.firstVelourCharges;
+      if (Math.abs(current - v) > 0.0001) update.firstVelourChargesOverride = v;
+    } else if (bucket.firstVelour.size > 1) {
+      warnings.push(`${seg.product.code}: "First velour charges / Kg" differs across its items - left unchanged.`);
+    }
+    if (bucket.secondVelour.size === 1) {
+      const [v] = bucket.secondVelour;
+      const current = seg.secondVelourChargesOverride ?? seg.product.secondVelourCharges;
+      if (Math.abs(current - v) > 0.0001) update.secondVelourChargesOverride = v;
+    } else if (bucket.secondVelour.size > 1) {
+      warnings.push(`${seg.product.code}: "Second velour charges / Kg" differs across its items - left unchanged.`);
+    }
+    if (bucket.transport.size === 1) {
+      const [v] = bucket.transport;
+      const current = seg.transportLocalPerKgOverride ?? seg.product.transportLocalPerKg;
+      if (Math.abs(current - v) > 0.0001) update.transportLocalPerKgOverride = v;
+    } else if (bucket.transport.size > 1) {
+      warnings.push(`${seg.product.code}: "Local transport / Kg" differs across its items - left unchanged.`);
+    }
+    if (Object.keys(update).length > 0) segmentUpdates.set(segmentId, update);
+  }
+
+  const processCostUpdateCount =
+    segmentUpdates.size + itemProcessChanges.size + Array.from(lineUpdates.values()).filter((u) => u.processingChargeRatePerKgOverride != null).length;
+  const accessoryUpdateCount = accessoryChanges.length + packagingChanges.length;
+
+  const anyChanges =
+    materialChanges.length > 0 ||
+    lineUpdates.size > 0 ||
+    Object.keys(quoteUpdate).length > 0 ||
+    segmentUpdates.size > 0 ||
+    itemProcessChanges.size > 0 ||
+    accessoryChanges.length > 0 ||
+    packagingChanges.length > 0;
+
+  if (!anyChanges) {
     return res.json({ changed: false, warnings: warnings.length ? warnings : ['Nothing in this file differs from the current quote.'] });
   }
 
@@ -414,11 +575,32 @@ quotesRouter.post('/:id/import-costsheet', requireRole('SUPERVISOR', 'ADMIN'), u
       });
     }
   }
-  for (const [lineId, marginPct] of marginChanges) {
-    await prisma.quoteLine.update({ where: { id: lineId }, data: { marginPctOverride: marginPct } });
+  for (const [lineId, data] of lineUpdates) {
+    await prisma.quoteLine.update({ where: { id: lineId }, data });
   }
   if (Object.keys(quoteUpdate).length > 0) {
     await prisma.quote.update({ where: { id: quoteId }, data: quoteUpdate });
+  }
+  for (const [segmentId, data] of segmentUpdates) {
+    await prisma.quoteLineSegment.update({ where: { id: segmentId }, data });
+  }
+  for (const [itemId, data] of itemProcessChanges) {
+    await prisma.quoteLineSegmentItem.update({ where: { id: itemId }, data });
+  }
+  for (const change of accessoryChanges) {
+    const existing = await prisma.quoteLineSegmentItemAccessory.findFirst({
+      where: { itemId: change.itemId, accessoryTypeId: change.accessoryTypeId },
+    });
+    if (existing) {
+      await prisma.quoteLineSegmentItemAccessory.update({ where: { id: existing.id }, data: { costPerPiece: change.costPerPiece } });
+    } else {
+      await prisma.quoteLineSegmentItemAccessory.create({
+        data: { itemId: change.itemId, accessoryTypeId: change.accessoryTypeId, costPerPiece: change.costPerPiece },
+      });
+    }
+  }
+  for (const change of packagingChanges) {
+    await prisma.quoteLineSegmentItemPackaging.update({ where: { id: change.packagingChargeId }, data: { ratePerPiece: change.ratePerPiece } });
   }
 
   const recomputeWarnings: string[] = [];
@@ -431,6 +613,8 @@ quotesRouter.post('/:id/import-costsheet', requireRole('SUPERVISOR', 'ADMIN'), u
     changed: true,
     materialsUpdated: materialChanges.length,
     marginsUpdated: marginChanges.size,
+    processCostsUpdated: processCostUpdateCount,
+    accessoriesUpdated: accessoryUpdateCount,
     commercialTermsUpdated: Object.keys(quoteUpdate),
     warnings: [...warnings, ...recomputeWarnings],
   });
