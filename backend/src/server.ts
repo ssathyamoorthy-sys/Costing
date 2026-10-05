@@ -1,8 +1,14 @@
 import 'dotenv/config';
+// Patches Express so a rejected promise inside an async route handler is forwarded to the
+// error-handling middleware below, instead of becoming an unhandled rejection that crashes
+// the whole process (and every other user's request with it). Must load before any router
+// below handles a request - importing it first guarantees that.
+import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import { Prisma } from '@prisma/client';
 import { authRouter } from './routes/auth';
 import { rawMaterialsRouter } from './routes/rawMaterials';
 import { productsRouter } from './routes/products';
@@ -18,6 +24,7 @@ import { quoteTemplateGroupsRouter } from './routes/quoteTemplateGroups';
 import { reportsRouter } from './routes/reports';
 import { notificationsRouter } from './routes/notifications';
 import { generalSettingsRouter } from './routes/generalSettings';
+import { usersRouter } from './routes/users';
 
 const app = express();
 app.use(cors());
@@ -40,9 +47,19 @@ app.use('/api/quote-template-groups', quoteTemplateGroupsRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/general-settings', generalSettingsRouter);
+app.use('/api/users', usersRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use('/api', (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === 'P2002') {
+      const fields = ((err.meta?.target as string[] | undefined) ?? []).join(', ') || 'this value';
+      return res.status(409).json({ error: `${fields} already exists - choose a different value.` });
+    }
+    if (err.code === 'P2025') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+  }
   console.error(err);
   res.status(500).json({ error: 'Internal server error' });
 });

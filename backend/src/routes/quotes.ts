@@ -172,6 +172,12 @@ quotesRouter.get('/', async (req, res) => {
   res.json(quotes.map((q) => ({ ...q, lines: sanitizeLinesForRole(q.lines, req.user!.role) })));
 });
 
+// Dashboard notification counts - cheap counts only (no nested lines/segments/items).
+quotesRouter.get('/counts', requireRole('SUPERVISOR', 'ADMIN'), async (_req, res) => {
+  const pendingApproval = await prisma.quote.count({ where: { status: 'PENDING_APPROVAL' } });
+  res.json({ pendingApproval });
+});
+
 quotesRouter.get('/:id', async (req, res) => {
   const quote = await prisma.quote.findUnique({
     where: { id: Number(req.params.id) },
@@ -1208,12 +1214,15 @@ quotesRouter.post('/:id/lock', requireRole('SUPERVISOR', 'ADMIN'), async (req, r
   const quote = await prisma.quote.findUnique({ where: { id: quoteId } });
   if (!quote) return res.status(404).json({ error: 'Not found' });
   if (quote.locked) return res.status(409).json({ error: 'Quote is already locked' });
-  if (quote.status !== 'SENT') return res.status(409).json({ error: 'Only a quote that has been sent to the customer can be locked' });
+  if (!['SENT', 'CONVERTED_TO_ORDER'].includes(quote.status)) {
+    return res.status(409).json({ error: 'Only a quote that has been sent to the customer (or converted to an order) can be locked' });
+  }
 
   // One last snapshot capturing the price exactly as it stood the moment before lock.
   await snapshotIfNeeded(quoteId, req.user!.userId);
 
-  const finalReferenceNo = `REF-${new Date().getFullYear()}-${quoteId.toString().padStart(4, '0')}`;
+  // CVN = Cost Verification Number - the irrevocable reference generated only at lock time.
+  const finalReferenceNo = `CVN-${new Date().getFullYear()}-${quoteId.toString().padStart(4, '0')}`;
   const updated = await prisma.quote.update({
     where: { id: quoteId },
     data: { locked: true, lockedAt: new Date(), lockedById: req.user!.userId, finalReferenceNo },

@@ -14,6 +14,7 @@ import { HsnCodesPage } from './pages/HsnCodesPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ExchangeRatesPage } from './pages/ExchangeRatesPage';
 import { GeneralSettingsPage } from './pages/GeneralSettingsPage';
+import { UsersPage } from './pages/UsersPage';
 import { QuotesListPage } from './pages/QuotesListPage';
 import { QuoteDetailPage } from './pages/QuoteDetailPage';
 import { NotificationsPage } from './pages/NotificationsPage';
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/exchange-rates" element={<ExchangeRatesPage />} />
         <Route path="/general-settings" element={<GeneralSettingsPage />} />
+        <Route path="/users" element={<UsersPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/change-password" element={<ChangePasswordPage />} />
       </Route>

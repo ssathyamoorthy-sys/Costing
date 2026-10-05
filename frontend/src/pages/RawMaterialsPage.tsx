@@ -20,6 +20,8 @@ export function RawMaterialsPage() {
   const [materialCode, setMaterialCode] = useState('');
   const [materialDesc, setMaterialDesc] = useState('');
 
+  const [editMaterial, setEditMaterial] = useState<{ id: number; code: string; description: string } | null>(null);
+
   const [rateForm, setRateForm] = useState<{ materialId: number; code: string } | null>(null);
   const [price, setPrice] = useState(0);
   const [validFrom, setValidFrom] = useState(new Date().toISOString().slice(0, 10));
@@ -39,6 +41,17 @@ export function RawMaterialsPage() {
       setNewMaterialForm(false);
       setMaterialCode('');
       setMaterialDesc('');
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function saveEditMaterial() {
+    if (!editMaterial) return;
+    try {
+      await api.put(`/raw-materials/${editMaterial.id}`, { code: editMaterial.code, description: editMaterial.description || undefined });
+      setEditMaterial(null);
       load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -150,7 +163,7 @@ export function RawMaterialsPage() {
               <th className="right">Current Rate/Kg</th>
               <th>Valid From</th>
               <th></th>
-              {isPurchase && <th className="right">Action</th>}
+              {(isPurchase || isSupervisor) && <th className="right">Action</th>}
             </tr>
           </thead>
           <tbody>
@@ -161,17 +174,28 @@ export function RawMaterialsPage() {
                 <td className="right mono">{m.currentRate ? `₹${m.currentRate.pricePerKg}` : <span className="muted">no rate</span>}</td>
                 <td>{m.currentRate ? new Date(m.currentRate.validFrom).toLocaleDateString() : '-'}</td>
                 <td>{m.currentRate?.isStale && <span className="badge pending">expired - using last rate</span>}</td>
-                {isPurchase && (
+                {(isPurchase || isSupervisor) && (
                   <td className="right">
-                    <button
-                      className="btn small"
-                      onClick={() => {
-                        setRateForm({ materialId: m.id, code: m.code });
-                        setPrice(m.currentRate?.pricePerKg ?? 0);
-                      }}
-                    >
-                      Submit new rate
-                    </button>
+                    {isSupervisor && (
+                      <button
+                        className="btn small"
+                        style={{ marginRight: 6 }}
+                        onClick={() => setEditMaterial({ id: m.id, code: m.code, description: m.description ?? '' })}
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {isPurchase && (
+                      <button
+                        className="btn small"
+                        onClick={() => {
+                          setRateForm({ materialId: m.id, code: m.code });
+                          setPrice(m.currentRate?.pricePerKg ?? 0);
+                        }}
+                      >
+                        Submit new rate
+                      </button>
+                    )}
                   </td>
                 )}
               </tr>
@@ -197,6 +221,35 @@ export function RawMaterialsPage() {
               Cancel
             </button>
             <button className="btn primary" onClick={addMaterial}>
+              Save
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {editMaterial && (
+        <Modal title={`Edit raw material`} onClose={() => setEditMaterial(null)}>
+          <div className="form-grid">
+            <div className="field">
+              <label>Code (yarn count/type)</label>
+              <input
+                value={editMaterial.code}
+                onChange={(e) => setEditMaterial({ ...editMaterial, code: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label>Description</label>
+              <input
+                value={editMaterial.description}
+                onChange={(e) => setEditMaterial({ ...editMaterial, description: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setEditMaterial(null)}>
+              Cancel
+            </button>
+            <button className="btn primary" onClick={saveEditMaterial}>
               Save
             </button>
           </div>

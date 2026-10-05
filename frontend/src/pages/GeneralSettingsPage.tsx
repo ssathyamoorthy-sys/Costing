@@ -18,6 +18,8 @@ export function GeneralSettingsPage() {
   const [items, setItems] = useState<Setting[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({});
+  const [newKey, setNewKey] = useState('');
+  const [newValue, setNewValue] = useState('');
 
   function load() {
     api.get<Setting[]>('/general-settings').then((rows) => {
@@ -30,6 +32,18 @@ export function GeneralSettingsPage() {
   async function save(key: string) {
     try {
       await api.put(`/general-settings/${key}`, { value: edits[key] });
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function addSetting() {
+    if (!newKey.trim() || !newValue.trim()) return;
+    try {
+      await api.put(`/general-settings/${newKey.trim()}`, { value: newValue.trim() });
+      setNewKey('');
+      setNewValue('');
       load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -76,6 +90,29 @@ export function GeneralSettingsPage() {
           </tbody>
         </table>
       </div>
+
+      {canEdit && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>Add a new setting</h3>
+          <div className="tag-row">
+            <input
+              placeholder="Key (e.g. minimumOrderQty)"
+              value={newKey}
+              onChange={(e) => setNewKey(e.target.value)}
+              style={{ flex: 1, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6 }}
+            />
+            <input
+              placeholder="Value"
+              value={newValue}
+              onChange={(e) => setNewValue(e.target.value)}
+              style={{ width: 160, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6 }}
+            />
+            <button className="btn primary" onClick={addSetting}>
+              Add
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

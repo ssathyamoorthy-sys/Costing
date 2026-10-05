@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { Link } from 'react-router-dom';
+import { api } from '../api';
 
 const BLURBS: Record<string, { title: string; desc: string; links: { to: string; label: string }[] }> = {
   ADMIN: {
@@ -32,8 +34,30 @@ const BLURBS: Record<string, { title: string; desc: string; links: { to: string;
   },
 };
 
+interface Counts {
+  pendingQuotes: number;
+  pendingRates: number;
+  incompleteProducts: number;
+}
+
 export function Dashboard() {
   const { user } = useAuth();
+  const [counts, setCounts] = useState<Counts | null>(null);
+  const canReview = user?.role === 'SUPERVISOR' || user?.role === 'ADMIN';
+
+  useEffect(() => {
+    if (!canReview) return;
+    Promise.all([
+      api.get<{ pendingApproval: number }>('/quotes/counts'),
+      api.get<unknown[]>('/raw-materials/rates/pending'),
+      api.get<{ count: number }>('/products/incomplete-count'),
+    ])
+      .then(([quoteCounts, pendingRates, productCounts]) => {
+        setCounts({ pendingQuotes: quoteCounts.pendingApproval, pendingRates: pendingRates.length, incompleteProducts: productCounts.count });
+      })
+      .catch(() => {});
+  }, [canReview]);
+
   if (!user) return null;
   const blurb = BLURBS[user.role];
 
@@ -50,6 +74,26 @@ export function Dashboard() {
           ))}
         </div>
       </div>
+
+      {canReview && counts && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>Needs your attention</h3>
+          <div className="highlight-stats">
+            <Link to="/quotes" className="stat-tile" style={{ textDecoration: 'none' }}>
+              <div className="stat-label">Quotes pending approval</div>
+              <div className="stat-value">{counts.pendingQuotes}</div>
+            </Link>
+            <Link to="/raw-materials" className="stat-tile" style={{ textDecoration: 'none' }}>
+              <div className="stat-label">Raw material rates to approve</div>
+              <div className="stat-value">{counts.pendingRates}</div>
+            </Link>
+            <Link to="/products" className="stat-tile" style={{ textDecoration: 'none' }}>
+              <div className="stat-label">Products missing cost inputs</div>
+              <div className="stat-value">{counts.incompleteProducts}</div>
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

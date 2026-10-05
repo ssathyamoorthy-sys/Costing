@@ -537,7 +537,7 @@ export function QuoteDetailPage() {
   async function lockQuote() {
     if (
       !confirm(
-        'Lock & Finalize this quote? A permanent reference number will be generated, and pricing can never be changed again (only an Admin could still touch it). This cannot be undone.',
+        'Lock & Finalize this quote? A permanent Cost Verification Number (CVN) will be generated, and pricing can never be changed again (only an Admin could still touch it). This cannot be undone.',
       )
     )
       return;
@@ -702,8 +702,8 @@ export function QuoteDetailPage() {
               Mark as sent to customer
             </button>
           )}
-          {isSupervisor && quote.status === 'SENT' && !quote.locked && (
-            <button className="btn primary" onClick={lockQuote} title="Generates a permanent reference number and freezes pricing for good">
+          {isSupervisor && (quote.status === 'SENT' || quote.status === 'CONVERTED_TO_ORDER') && !quote.locked && (
+            <button className="btn primary" onClick={lockQuote} title="Generates a permanent Cost Verification Number (CVN) and freezes pricing for good">
               Lock &amp; Finalize
             </button>
           )}
@@ -775,7 +775,7 @@ export function QuoteDetailPage() {
           <div className="form-grid" style={{ marginTop: 8 }}>
             <div>
               <div className="muted" style={{ fontSize: 12 }}>
-                Final Reference #
+                Cost Verification Number (CVN)
               </div>
               <strong>{quote.finalReferenceNo}</strong>
             </div>

@@ -34,6 +34,13 @@ rawMaterialsRouter.post('/', requireRole('SUPERVISOR', 'ADMIN'), async (req, res
   res.status(201).json(material);
 });
 
+rawMaterialsRouter.put('/:id', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const parsed = materialSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const material = await prisma.rawMaterial.update({ where: { id: Number(req.params.id) }, data: parsed.data });
+  res.json(material);
+});
+
 // --- Bulk import / export (xlsx) ---
 
 rawMaterialsRouter.get('/export.xlsx', requireRole('SUPERVISOR', 'ADMIN'), async (_req, res) => {

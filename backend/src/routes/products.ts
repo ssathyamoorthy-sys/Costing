@@ -22,8 +22,20 @@ productsRouter.get('/', async (_req, res) => {
   res.json(products);
 });
 
-// NOTE: these two fixed-path routes must stay registered before GET /:id,
-// otherwise Express matches "export.xlsx" as the :id param.
+// Dashboard notification count: active products that can't actually be costed yet - no
+// yarn recipe at all, or one whose mixing % doesn't add up to 100 (the same tolerance
+// computeSet warns about when a quote is built off this product).
+// NOTE: this fixed-path route (and export.xlsx below) must stay registered before GET
+// /:id, otherwise Express matches them as the :id param.
+productsRouter.get('/incomplete-count', requireRole('SUPERVISOR', 'ADMIN'), async (_req, res) => {
+  const products = await prisma.product.findMany({
+    where: { active: true },
+    include: { yarnComponents: true },
+  });
+  const count = products.filter((p) => p.yarnComponents.length === 0 || !validateMixing(p.yarnComponents).ok).length;
+  res.json({ count });
+});
+
 productsRouter.get('/export.xlsx', requireRole('SUPERVISOR', 'ADMIN'), async (_req, res) => {
   const products = await prisma.product.findMany({
     include: { yarnComponents: { include: { rawMaterial: true } } },
