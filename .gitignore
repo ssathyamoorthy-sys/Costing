@@ -6,5 +6,10 @@ build/
 !.env.example
 backend/prisma/dev.db
 backend/prisma/dev.db-journal
+backend/prisma/prod.db
+backend/prisma/prod.db-journal
+backend/*.db
+backend/*.db-journal
+deploy/.previous-commit.txt
 frontend/.vite/
 *.tsbuildinfo
