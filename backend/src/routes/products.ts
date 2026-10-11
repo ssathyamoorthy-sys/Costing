@@ -188,6 +188,8 @@ const yarnComponentSchema = z.object({
   slot: z.string().min(1),
   rawMaterialId: z.number().int().positive(),
   mixingPct: z.number().positive(),
+  // Yarn-dyed only: cost/kg to dye this slot.
+  dyeingCostPerKg: z.number().nonnegative().optional(),
 });
 
 const productSchema = z.object({
@@ -202,6 +204,13 @@ const productSchema = z.object({
   weightLossPct: z.number().min(0).max(1),
   transportLocalPerKg: z.number().nonnegative(),
   rejectionPct: z.number().min(0).max(1),
+  // Optional second, sequential rejection stage (garment items, e.g. bathrobes).
+  secondRejectionPct: z.number().min(0).max(1).optional(),
+  // Color method: PIECE_DYED (default) or YARN_DYED - see schema.prisma.
+  colorMethod: z.enum(['PIECE_DYED', 'YARN_DYED']).optional(),
+  yarnDyeingProcessLossPct: z.number().min(0).max(1).optional(),
+  washingCostPerKg: z.number().nonnegative().optional(),
+  washingLossPct: z.number().min(0).max(1).optional(),
   yarnComponents: z.array(yarnComponentSchema).min(1),
   force: z.boolean().optional(), // bypass the mixing-% == 100 warning
 });

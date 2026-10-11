@@ -72,6 +72,15 @@ model ItemType {
   stitchingCostPerKg Float
   packingCostPerKg   Float
 
+  // How an item of this type is sized: DIMENSIONS (default - length x width x GSM, for flat
+  // items like towels) or FABRIC_CONSUMPTION (a garment's fabric use isn't a simple
+  // rectangle - sq.m consumed per piece is entered directly instead, e.g. bathrobes).
+  sizingMethod String @default("DIMENSIONS")
+  // Alternative to stitchingCostPerKg for garments, where stitching is a flat per-piece
+  // labor cost rather than one that scales with fabric weight. 0 = not used (falls back to
+  // stitchingCostPerKg).
+  stitchingCostPerPiece Float @default(0)
+
   quoteLineItems QuoteLineSegmentItem[]
   templateItems  QuoteTemplateSegmentItem[]
 }
@@ -106,6 +115,21 @@ model Product {
   weightLossPct          Float
   transportLocalPerKg    Float
   rejectionPct           Float
+  // Optional second, sequential rejection stage in the BOM multiplier chain - garment items
+  // (e.g. bathrobes) separate "fabric rejection" (above) from a further "final/garment
+  // rejection" after cutting & stitching. 0 = not used (flat items like towels).
+  secondRejectionPct     Float    @default(0)
+
+  // Color method: PIECE_DYED (default - fabric dyed as one piece after weaving, via the
+  // Processing Charge master keyed by color) or YARN_DYED (yarn dyed before weaving, cost
+  // carried per yarn-recipe slot instead - see dyeingCostPerKg on ProductYarnComponent /
+  // QuoteLineSegmentYarn). weightLossPct/processingCharge above apply to PIECE_DYED only;
+  // the three fields below apply to YARN_DYED only.
+  colorMethod                String @default("PIECE_DYED")
+  yarnDyeingProcessLossPct   Float  @default(0)
+  washingCostPerKg           Float  @default(0)
+  washingLossPct             Float  @default(0)
+
   active                 Boolean  @default(true)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
@@ -124,6 +148,9 @@ model ProductYarnComponent {
   rawMaterialId Int
   rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
   mixingPct     Float
+  // Yarn-dyed only: cost/kg to dye this specific slot (different slots can be dyed
+  // different shades, e.g. a contrast stripe costs more to dye than the base color).
+  dyeingCostPerKg Float @default(0)
 }
 
 model ProcessingCharge {
@@ -304,6 +331,7 @@ model QuoteLineSegment {
   firstVelourChargesOverride     Float?
   secondVelourChargesOverride    Float?
   transportLocalPerKgOverride    Float?
+  washingCostPerKgOverride       Float?
 
   // Yarn recipe for this segment - pre-filled from the Product's default recipe when the
   // segment is created, then freely editable by the merchandiser for this quote only.
@@ -320,6 +348,8 @@ model QuoteLineSegmentYarn {
   rawMaterialId Int
   rawMaterial   RawMaterial      @relation(fields: [rawMaterialId], references: [id])
   mixingPct     Float
+  // Yarn-dyed only: cost/kg to dye this specific slot - see ProductYarnComponent.
+  dyeingCostPerKg Float @default(0)
 }
 
 model QuoteLineSegmentItem {
@@ -328,8 +358,16 @@ model QuoteLineSegmentItem {
   segment    QuoteLineSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
   itemTypeId Int
   itemType   ItemType         @relation(fields: [itemTypeId], references: [id])
+  // Flat items (sizingMethod = DIMENSIONS, e.g. towels): both set, pieceWeight computed
+  // from L x W x GSM. Garment items (sizingMethod = FABRIC_CONSUMPTION, e.g. bathrobes):
+  // both left at 0 (not nullable - avoids a SQLite table-rebuild migration on a widely-
+  // referenced table), fabricConsumptionSqm set instead - see below.
   lengthCm   Float
   widthCm    Float
+  // Garment items only: fabric required per piece, in sq.m (a tailored pattern isn't a
+  // simple rectangle, so this is entered directly rather than computed from L x W). Null/0
+  // for flat items.
+  fabricConsumptionSqm Float?
   gsm        Float
   qtyPerSet  Int              // how many pieces of this item go into one set
 
@@ -341,8 +379,9 @@ model QuoteLineSegmentItem {
   // Overrides the Item Type master's stitching/packing cost for this item only - never
   // changes the shared Item Type record, so other quotes using the same item type are
   // unaffected.
-  stitchingCostPerKgOverride Float?
-  packingCostPerKgOverride   Float?
+  stitchingCostPerKgOverride    Float?
+  stitchingCostPerPieceOverride Float?
+  packingCostPerKgOverride      Float?
 
   pieceWeightGrams Float?
   qtyKg            Float?     // pieceWeightGrams * qtyPerSet / 1000 - one set's worth
@@ -428,6 +467,8 @@ model QuoteTemplateSegmentYarn {
   rawMaterialId Int
   rawMaterial   RawMaterial          @relation(fields: [rawMaterialId], references: [id])
   mixingPct     Float
+  // Yarn-dyed only: cost/kg to dye this slot - see schema.prisma (ProductYarnComponent).
+  dyeingCostPerKg Float @default(0)
 }
 
 model QuoteTemplateSegmentItem {
@@ -438,6 +479,8 @@ model QuoteTemplateSegmentItem {
   itemType   ItemType             @relation(fields: [itemTypeId], references: [id])
   lengthCm   Float
   widthCm    Float
+  // Garment items only: fabric required per piece, in sq.m - see QuoteLineSegmentItem.
+  fabricConsumptionSqm Float?
   gsm        Float
   qtyPerSet  Int
 

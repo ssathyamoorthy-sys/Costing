@@ -14,6 +14,11 @@ const schema = z.object({
   name: z.string().min(1),
   stitchingCostPerKg: z.number().nonnegative(),
   packingCostPerKg: z.number().nonnegative(),
+  // How items of this type are sized: DIMENSIONS (default, towels) or FABRIC_CONSUMPTION
+  // (garments, e.g. bathrobes) - see schema.prisma.
+  sizingMethod: z.enum(['DIMENSIONS', 'FABRIC_CONSUMPTION']).optional(),
+  // Alternative to stitchingCostPerKg for garments - a flat per-piece labor cost.
+  stitchingCostPerPiece: z.number().nonnegative().optional(),
 });
 
 itemTypesRouter.post('/', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {

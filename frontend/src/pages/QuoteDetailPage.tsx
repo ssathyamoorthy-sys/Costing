@@ -78,6 +78,7 @@ interface FormYarnRow {
   slot: string;
   rawMaterialId: number | '';
   mixingPct: number;
+  dyeingCostPerKg: number;
 }
 interface FormPackagingCharge {
   description: string;
@@ -87,6 +88,7 @@ interface FormItem {
   itemTypeId: number | '';
   lengthCm: string;
   widthCm: string;
+  fabricConsumptionSqm: string;
   gsm: string;
   qtyPerSet: string;
   hsnCodeId: number | '';
@@ -105,7 +107,12 @@ interface SetForm {
 }
 
 function emptyItem(): FormItem {
-  return { itemTypeId: '', lengthCm: '', widthCm: '', gsm: '', qtyPerSet: '1', hsnCodeId: '', packagingCharges: [] };
+  return { itemTypeId: '', lengthCm: '', widthCm: '', fabricConsumptionSqm: '', gsm: '', qtyPerSet: '1', hsnCodeId: '', packagingCharges: [] };
+}
+// Garment items (fabricConsumptionSqm set, lengthCm/widthCm left at the 0 sentinel) show
+// the fabric consumption instead of a meaningless "0x0cm".
+function sizeLabel(item: { lengthCm: number; widthCm: number; fabricConsumptionSqm?: number | null }) {
+  return item.fabricConsumptionSqm ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.lengthCm}x${item.widthCm}cm`;
 }
 function emptySegment(): FormSegment {
   return { productId: '', yarnComponents: [], items: [emptyItem()] };
@@ -215,11 +222,12 @@ export function QuoteDetailPage() {
       targetPrice: line.targetPrice != null ? String(line.targetPrice) : '',
       segments: line.segments.map((seg) => ({
         productId: seg.productId,
-        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })),
+        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg ?? 0 })),
         items: seg.items.map((it) => ({
           itemTypeId: it.itemTypeId,
           lengthCm: String(it.lengthCm),
           widthCm: String(it.widthCm),
+          fabricConsumptionSqm: it.fabricConsumptionSqm ? String(it.fabricConsumptionSqm) : '',
           gsm: String(it.gsm),
           qtyPerSet: String(it.qtyPerSet),
           hsnCodeId: it.hsnCodeId ?? '',
@@ -257,11 +265,12 @@ export function QuoteDetailPage() {
       targetPrice: '',
       segments: template.segments.map((seg) => ({
         productId: seg.productId,
-        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })),
+        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg ?? 0 })),
         items: seg.items.map((it) => ({
           itemTypeId: it.itemTypeId,
           lengthCm: String(it.lengthCm),
           widthCm: String(it.widthCm),
+          fabricConsumptionSqm: it.fabricConsumptionSqm ? String(it.fabricConsumptionSqm) : '',
           gsm: String(it.gsm),
           qtyPerSet: String(it.qtyPerSet),
           hsnCodeId: '' as number | '',
@@ -315,11 +324,12 @@ export function QuoteDetailPage() {
           qtySets: template.qtySets,
           segments: template.segments.map((seg) => ({
             productId: seg.productId,
-            yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })),
+            yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg ?? 0 })),
             items: seg.items.map((it) => ({
               itemTypeId: it.itemTypeId,
               lengthCm: it.lengthCm,
               widthCm: it.widthCm,
+              fabricConsumptionSqm: it.fabricConsumptionSqm ?? undefined,
               gsm: it.gsm,
               qtyPerSet: it.qtyPerSet,
               packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })),
@@ -359,7 +369,12 @@ export function QuoteDetailPage() {
           ? {
               ...seg,
               productId,
-              yarnComponents: (product?.yarnComponents ?? []).map((c) => ({ slot: c.slot, rawMaterialId: c.rawMaterialId, mixingPct: c.mixingPct })),
+              yarnComponents: (product?.yarnComponents ?? []).map((c) => ({
+                slot: c.slot,
+                rawMaterialId: c.rawMaterialId,
+                mixingPct: c.mixingPct,
+                dyeingCostPerKg: c.dyeingCostPerKg ?? 0,
+              })),
             }
           : seg,
       ),
@@ -368,7 +383,7 @@ export function QuoteDetailPage() {
   function addYarnRow(segIdx: number) {
     setForm((f) => ({
       ...f,
-      segments: f.segments.map((seg, i) => (i === segIdx ? { ...seg, yarnComponents: [...seg.yarnComponents, { slot: '', rawMaterialId: '', mixingPct: 0 }] } : seg)),
+      segments: f.segments.map((seg, i) => (i === segIdx ? { ...seg, yarnComponents: [...seg.yarnComponents, { slot: '', rawMaterialId: '', mixingPct: 0, dyeingCostPerKg: 0 }] } : seg)),
     }));
   }
   function updateYarnRow(segIdx: number, rowIdx: number, patch: Partial<FormYarnRow>) {
@@ -427,7 +442,9 @@ export function QuoteDetailPage() {
       }
       if (seg.items.length === 0) return false;
       for (const it of seg.items) {
-        if (!it.itemTypeId || !it.lengthCm || !it.widthCm || !it.gsm || !it.qtyPerSet) return false;
+        if (!it.itemTypeId || !it.gsm || !it.qtyPerSet) return false;
+        const isGarment = itemTypes.find((t) => t.id === it.itemTypeId)?.sizingMethod === 'FABRIC_CONSUMPTION';
+        if (isGarment ? !it.fabricConsumptionSqm : !it.lengthCm || !it.widthCm) return false;
       }
     }
     return true;
@@ -440,18 +457,27 @@ export function QuoteDetailPage() {
       targetPrice: form.targetPrice ? Number(form.targetPrice) : undefined,
       segments: form.segments.map((seg) => ({
         productId: Number(seg.productId),
-        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: Number(y.rawMaterialId), mixingPct: Number(y.mixingPct) })),
-        items: seg.items.map((it) => ({
-          itemTypeId: Number(it.itemTypeId),
-          lengthCm: Number(it.lengthCm),
-          widthCm: Number(it.widthCm),
-          gsm: Number(it.gsm),
-          qtyPerSet: Number(it.qtyPerSet),
-          hsnCodeId: it.hsnCodeId ? Number(it.hsnCodeId) : undefined,
-          packagingCharges: it.packagingCharges
-            .filter((p) => p.description && p.ratePerPiece)
-            .map((p) => ({ description: p.description, ratePerPiece: Number(p.ratePerPiece) })),
+        yarnComponents: seg.yarnComponents.map((y) => ({
+          slot: y.slot,
+          rawMaterialId: Number(y.rawMaterialId),
+          mixingPct: Number(y.mixingPct),
+          dyeingCostPerKg: Number(y.dyeingCostPerKg) || 0,
         })),
+        items: seg.items.map((it) => {
+          const isGarment = itemTypes.find((t) => t.id === it.itemTypeId)?.sizingMethod === 'FABRIC_CONSUMPTION';
+          return {
+            itemTypeId: Number(it.itemTypeId),
+            lengthCm: isGarment ? 0 : Number(it.lengthCm),
+            widthCm: isGarment ? 0 : Number(it.widthCm),
+            fabricConsumptionSqm: isGarment ? Number(it.fabricConsumptionSqm) : undefined,
+            gsm: Number(it.gsm),
+            qtyPerSet: Number(it.qtyPerSet),
+            hsnCodeId: it.hsnCodeId ? Number(it.hsnCodeId) : undefined,
+            packagingCharges: it.packagingCharges
+              .filter((p) => p.description && p.ratePerPiece)
+              .map((p) => ({ description: p.description, ratePerPiece: Number(p.ratePerPiece) })),
+          };
+        }),
       })),
     };
   }
@@ -1047,9 +1073,7 @@ export function QuoteDetailPage() {
                         <Fragment key={item.id}>
                           <tr>
                             <td>{item.itemType?.name}</td>
-                            <td>
-                              {item.lengthCm}x{item.widthCm}
-                            </td>
+                            <td>{sizeLabel(item)}</td>
                             <td className="right mono">{item.gsm}</td>
                             <td className="right mono">{item.qtyPerSet}</td>
                             <td className="right mono">{b?.ratePerPiece?.[currency] != null ? `${symbol}${b.ratePerPiece[currency].toFixed(4)}` : '-'}</td>
@@ -1219,7 +1243,7 @@ export function QuoteDetailPage() {
                   <>
                     {' '}
                     - {singleSeg!.product?.code}
-                    {singleLabel ? ` (${singleLabel})` : ''} - {singleItem!.itemType?.name} - {line.color} - {singleItem!.lengthCm}x{singleItem!.widthCm}cm, GSM{' '}
+                    {singleLabel ? ` (${singleLabel})` : ''} - {singleItem!.itemType?.name} - {line.color} - {sizeLabel(singleItem!)}, GSM{' '}
                     {singleItem!.gsm} - Qty {line.qtySets.toLocaleString()} pcs
                   </>
                 ) : (
@@ -1498,6 +1522,7 @@ export function QuoteDetailPage() {
                         <th>Slot</th>
                         <th>Raw material</th>
                         <th className="right">Mixing %</th>
+                        {products.find((p) => p.id === seg.productId)?.colorMethod === 'YARN_DYED' && <th className="right">Dyeing cost/kg (₹)</th>}
                         <th></th>
                       </tr>
                     </thead>
@@ -1526,6 +1551,17 @@ export function QuoteDetailPage() {
                               style={{ width: 70, textAlign: 'right' }}
                             />
                           </td>
+                          {products.find((p) => p.id === seg.productId)?.colorMethod === 'YARN_DYED' && (
+                            <td className="right">
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={row.dyeingCostPerKg}
+                                onChange={(e) => updateYarnRow(segIdx, rowIdx, { dyeingCostPerKg: Number(e.target.value) })}
+                                style={{ width: 90, textAlign: 'right' }}
+                              />
+                            </td>
+                          )}
                           <td>
                             <button className="btn small danger" onClick={() => removeYarnRow(segIdx, rowIdx)}>
                               Remove
@@ -1569,14 +1605,27 @@ export function QuoteDetailPage() {
                           ))}
                         </select>
                       </div>
-                      <div className="field">
-                        <label>Length (cm)</label>
-                        <input type="number" value={item.lengthCm} onChange={(e) => updateItem(segIdx, itemIdx, { lengthCm: e.target.value })} />
-                      </div>
-                      <div className="field">
-                        <label>Width (cm)</label>
-                        <input type="number" value={item.widthCm} onChange={(e) => updateItem(segIdx, itemIdx, { widthCm: e.target.value })} />
-                      </div>
+                      {itemTypes.find((t) => t.id === item.itemTypeId)?.sizingMethod === 'FABRIC_CONSUMPTION' ? (
+                        <div className="field">
+                          <label>Fabric consumption (sqm/pc)</label>
+                          <input
+                            type="number"
+                            value={item.fabricConsumptionSqm}
+                            onChange={(e) => updateItem(segIdx, itemIdx, { fabricConsumptionSqm: e.target.value })}
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <div className="field">
+                            <label>Length (cm)</label>
+                            <input type="number" value={item.lengthCm} onChange={(e) => updateItem(segIdx, itemIdx, { lengthCm: e.target.value })} />
+                          </div>
+                          <div className="field">
+                            <label>Width (cm)</label>
+                            <input type="number" value={item.widthCm} onChange={(e) => updateItem(segIdx, itemIdx, { widthCm: e.target.value })} />
+                          </div>
+                        </>
+                      )}
                       <div className="field">
                         <label>GSM</label>
                         <input type="number" value={item.gsm} onChange={(e) => updateItem(segIdx, itemIdx, { gsm: e.target.value })} />

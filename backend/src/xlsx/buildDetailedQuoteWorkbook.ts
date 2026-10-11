@@ -78,6 +78,8 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     for (const seg of line.segments) {
       const materialOverrideByRawMaterialId = new Map(seg.materialOverrides.map((o) => [o.rawMaterialId, o]));
 
+      const isYarnDyed = seg.product.colorMethod === 'YARN_DYED';
+
       const yarnRows: ItemSheetContext['yarnRows'] = [];
       for (const y of seg.yarnComponents) {
         const override = materialOverrideByRawMaterialId.get(y.rawMaterialId);
@@ -88,6 +90,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
             mixingPct: y.mixingPct,
             pricePerKg: override.overridePricePerKg,
             overrideNote: override.reason || 'override',
+            dyeingCostPerKg: y.dyeingCostPerKg,
           });
         } else {
           const resolved = await resolveCurrentRate(y.rawMaterialId);
@@ -97,6 +100,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
             mixingPct: y.mixingPct,
             pricePerKg: resolved?.pricePerKg ?? 0,
             overrideNote: resolved?.isStale ? 'stale rate' : null,
+            dyeingCostPerKg: y.dyeingCostPerKg,
           });
         }
       }
@@ -116,6 +120,8 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
           accessoryRows.push({ name: p.description, costPerPiece: p.ratePerPiece });
         }
 
+        const isGarment = item.itemType.sizingMethod === 'FABRIC_CONSUMPTION';
+
         const ctx: ItemSheetContext = {
           quoteNo: quote.quoteNo,
           customerName: quote.customer.name,
@@ -126,22 +132,30 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
           qtySets: line.qtySets,
           currency: quote.currency,
           exchangeRateToInr,
+          colorMethod: seg.product.colorMethod as 'PIECE_DYED' | 'YARN_DYED',
+          itemClass: isGarment ? 'GARMENT' : 'FLAT',
           lengthCm: item.lengthCm,
           widthCm: item.widthCm,
+          fabricConsumptionSqm: item.fabricConsumptionSqm ?? 0,
           gsm: item.gsm,
           qtyPerSet: item.qtyPerSet,
           weavingWastagePct: seg.product.weavingWastagePct,
           firstVelourLossPct: seg.product.firstVelourLossPct,
           weightLossPct: seg.product.weightLossPct,
+          washingLossPct: seg.product.washingLossPct,
           secondVelourLossPct: seg.product.secondVelourLossPct,
           rejectionPct: seg.product.rejectionPct,
+          secondRejectionPct: seg.product.secondRejectionPct,
+          yarnDyeingProcessLossPct: seg.product.yarnDyeingProcessLossPct,
           yarnRows,
           weavingSizingCostPerKg: seg.weavingSizingCostPerKgOverride ?? seg.product.weavingSizingCostPerKg,
           firstVelourCharges: seg.firstVelourChargesOverride ?? seg.product.firstVelourCharges,
           processingChargeRatePerKg,
+          washingCostPerKg: seg.washingCostPerKgOverride ?? seg.product.washingCostPerKg,
           secondVelourCharges: seg.secondVelourChargesOverride ?? seg.product.secondVelourCharges,
           transportLocalPerKg: seg.transportLocalPerKgOverride ?? seg.product.transportLocalPerKg,
           stitchingCostPerKg: item.stitchingCostPerKgOverride ?? item.itemType.stitchingCostPerKg,
+          stitchingCostPerPiece: item.stitchingCostPerPieceOverride ?? item.itemType.stitchingCostPerPiece,
           packingCostPerKg: item.packingCostPerKgOverride ?? item.itemType.packingCostPerKg,
           accessoryRows,
           freightExportPerKg,
@@ -162,7 +176,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
           setNo: lineIdx + 1,
           segment: ctx.segmentLabel,
           item: item.itemType.name,
-          size: `${item.lengthCm}x${item.widthCm}`,
+          size: isGarment ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.lengthCm}x${item.widthCm}`,
           qty: item.qtyPerSet,
           rateKgFormula: rateKgCell,
           ratePcFormula: ratePieceCell,

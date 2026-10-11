@@ -8,6 +8,7 @@ interface YarnRow {
   slot: string;
   rawMaterialId: number;
   mixingPct: number;
+  dyeingCostPerKg: number;
 }
 interface AccessoryRow {
   accessoryTypeId: number;
@@ -34,12 +35,17 @@ export function ProductEditPage() {
     weightLossPct: 8,
     transportLocalPerKg: 3,
     rejectionPct: 3,
+    secondRejectionPct: 0,
+    yarnDyeingProcessLossPct: 0,
+    washingCostPerKg: 0,
+    washingLossPct: 0,
   });
+  const [colorMethod, setColorMethod] = useState<'PIECE_DYED' | 'YARN_DYED'>('PIECE_DYED');
   const [yarnRows, setYarnRows] = useState<YarnRow[]>([
-    { slot: 'Ground', rawMaterialId: 0, mixingPct: 20 },
-    { slot: 'Pile', rawMaterialId: 0, mixingPct: 60 },
-    { slot: 'Weft', rawMaterialId: 0, mixingPct: 17 },
-    { slot: 'Scoured', rawMaterialId: 0, mixingPct: 3 },
+    { slot: 'Ground', rawMaterialId: 0, mixingPct: 20, dyeingCostPerKg: 0 },
+    { slot: 'Pile', rawMaterialId: 0, mixingPct: 60, dyeingCostPerKg: 0 },
+    { slot: 'Weft', rawMaterialId: 0, mixingPct: 17, dyeingCostPerKg: 0 },
+    { slot: 'Scoured', rawMaterialId: 0, mixingPct: 3, dyeingCostPerKg: 0 },
   ]);
   const [accessoryRows, setAccessoryRows] = useState<AccessoryRow[]>([]);
 
@@ -66,8 +72,13 @@ export function ProductEditPage() {
         weightLossPct: p.weightLossPct * 100,
         transportLocalPerKg: p.transportLocalPerKg,
         rejectionPct: p.rejectionPct * 100,
+        secondRejectionPct: (p.secondRejectionPct ?? 0) * 100,
+        yarnDyeingProcessLossPct: (p.yarnDyeingProcessLossPct ?? 0) * 100,
+        washingCostPerKg: p.washingCostPerKg ?? 0,
+        washingLossPct: (p.washingLossPct ?? 0) * 100,
       });
-      setYarnRows(p.yarnComponents.map((c) => ({ slot: c.slot, rawMaterialId: c.rawMaterialId, mixingPct: c.mixingPct })));
+      setColorMethod(p.colorMethod ?? 'PIECE_DYED');
+      setYarnRows(p.yarnComponents.map((c) => ({ slot: c.slot, rawMaterialId: c.rawMaterialId, mixingPct: c.mixingPct, dyeingCostPerKg: c.dyeingCostPerKg ?? 0 })));
       setAccessoryRows(p.accessories.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })));
     });
   }, [id, isNew]);
@@ -78,7 +89,7 @@ export function ProductEditPage() {
     setYarnRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
   function addYarnRow() {
-    setYarnRows((rows) => [...rows, { slot: '', rawMaterialId: 0, mixingPct: 0 }]);
+    setYarnRows((rows) => [...rows, { slot: '', rawMaterialId: 0, mixingPct: 0, dyeingCostPerKg: 0 }]);
   }
   function removeYarnRow(i: number) {
     setYarnRows((rows) => rows.filter((_, idx) => idx !== i));
@@ -109,7 +120,12 @@ export function ProductEditPage() {
       weightLossPct: fields.weightLossPct / 100,
       transportLocalPerKg: fields.transportLocalPerKg,
       rejectionPct: fields.rejectionPct / 100,
-      yarnComponents: yarnRows.map((r) => ({ ...r, mixingPct: Number(r.mixingPct) })),
+      secondRejectionPct: fields.secondRejectionPct / 100,
+      colorMethod,
+      yarnDyeingProcessLossPct: fields.yarnDyeingProcessLossPct / 100,
+      washingCostPerKg: fields.washingCostPerKg,
+      washingLossPct: fields.washingLossPct / 100,
+      yarnComponents: yarnRows.map((r) => ({ ...r, mixingPct: Number(r.mixingPct), dyeingCostPerKg: Number(r.dyeingCostPerKg) || 0 })),
       force,
     };
 
@@ -164,6 +180,24 @@ export function ProductEditPage() {
         <h3 style={{ marginTop: 0 }}>Process parameters</h3>
         <div className="form-grid">
           <div className="field">
+            <label>Color method</label>
+            <select value={colorMethod} onChange={(e) => setColorMethod(e.target.value as 'PIECE_DYED' | 'YARN_DYED')}>
+              <option value="PIECE_DYED">Piece dyed (dyed as fabric after weaving)</option>
+              <option value="YARN_DYED">Yarn dyed (yarn dyed per-slot before weaving)</option>
+            </select>
+          </div>
+          {colorMethod === 'YARN_DYED' && (
+            <div className="field">
+              <label>Yarn dyeing process loss %</label>
+              <input
+                type="number"
+                step="0.01"
+                value={fields.yarnDyeingProcessLossPct}
+                onChange={(e) => setFields({ ...fields, yarnDyeingProcessLossPct: Number(e.target.value) })}
+              />
+            </div>
+          )}
+          <div className="field">
             <label>Weaving wastage %</label>
             <input type="number" step="0.01" value={fields.weavingWastagePct} onChange={(e) => setFields({ ...fields, weavingWastagePct: Number(e.target.value) })} />
           </div>
@@ -179,10 +213,23 @@ export function ProductEditPage() {
             <label>First velour loss %</label>
             <input type="number" step="0.01" value={fields.firstVelourLossPct} onChange={(e) => setFields({ ...fields, firstVelourLossPct: Number(e.target.value) })} />
           </div>
-          <div className="field">
-            <label>Weight loss %</label>
-            <input type="number" step="0.01" value={fields.weightLossPct} onChange={(e) => setFields({ ...fields, weightLossPct: Number(e.target.value) })} />
-          </div>
+          {colorMethod === 'YARN_DYED' ? (
+            <>
+              <div className="field">
+                <label>Washing cost/kg (₹)</label>
+                <input type="number" value={fields.washingCostPerKg} onChange={(e) => setFields({ ...fields, washingCostPerKg: Number(e.target.value) })} />
+              </div>
+              <div className="field">
+                <label>Washing loss %</label>
+                <input type="number" step="0.01" value={fields.washingLossPct} onChange={(e) => setFields({ ...fields, washingLossPct: Number(e.target.value) })} />
+              </div>
+            </>
+          ) : (
+            <div className="field">
+              <label>Weight loss %</label>
+              <input type="number" step="0.01" value={fields.weightLossPct} onChange={(e) => setFields({ ...fields, weightLossPct: Number(e.target.value) })} />
+            </div>
+          )}
           <div className="field">
             <label>Second velour charges (₹/kg)</label>
             <input type="number" value={fields.secondVelourCharges} onChange={(e) => setFields({ ...fields, secondVelourCharges: Number(e.target.value) })} />
@@ -199,7 +246,17 @@ export function ProductEditPage() {
             <label>Rejection %</label>
             <input type="number" step="0.01" value={fields.rejectionPct} onChange={(e) => setFields({ ...fields, rejectionPct: Number(e.target.value) })} />
           </div>
+          <div className="field">
+            <label>Second rejection % (garment items only)</label>
+            <input type="number" step="0.01" value={fields.secondRejectionPct} onChange={(e) => setFields({ ...fields, secondRejectionPct: Number(e.target.value) })} />
+          </div>
         </div>
+        {colorMethod === 'YARN_DYED' && (
+          <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
+            Yarn-dyed products skip the flat Processing Charge (by color) entirely - each yarn slot below carries
+            its own dyeing cost/kg instead, and washing (above) replaces the piece-dyed processing stage after weaving.
+          </p>
+        )}
       </div>
 
       <div className="panel">
@@ -220,6 +277,7 @@ export function ProductEditPage() {
               <th>Slot</th>
               <th>Raw material</th>
               <th className="right">Mixing %</th>
+              {colorMethod === 'YARN_DYED' && <th className="right">Dyeing cost/kg (₹)</th>}
               <th></th>
             </tr>
           </thead>
@@ -242,6 +300,17 @@ export function ProductEditPage() {
                 <td className="right">
                   <input type="number" step="0.1" value={row.mixingPct} onChange={(e) => updateYarnRow(i, { mixingPct: Number(e.target.value) })} style={{ width: 80, textAlign: 'right' }} />
                 </td>
+                {colorMethod === 'YARN_DYED' && (
+                  <td className="right">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={row.dyeingCostPerKg}
+                      onChange={(e) => updateYarnRow(i, { dyeingCostPerKg: Number(e.target.value) })}
+                      style={{ width: 90, textAlign: 'right' }}
+                    />
+                  </td>
+                )}
                 <td>
                   <button className="btn small danger" onClick={() => removeYarnRow(i)}>
                     Remove

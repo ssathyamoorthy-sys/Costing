@@ -28,11 +28,18 @@ export interface RawMaterialRate {
   createdAt: string;
 }
 
+export type SizingMethod = 'DIMENSIONS' | 'FABRIC_CONSUMPTION';
+
 export interface ItemType {
   id: number;
   name: string;
   stitchingCostPerKg: number;
   packingCostPerKg: number;
+  // How items of this type are sized: DIMENSIONS (default, towels) or FABRIC_CONSUMPTION
+  // (garments, e.g. bathrobes) - see schema.prisma.
+  sizingMethod: SizingMethod;
+  // Alternative to stitchingCostPerKg for garments - a flat per-piece labor cost.
+  stitchingCostPerPiece: number;
 }
 
 export interface ProcessingCharge {
@@ -62,6 +69,8 @@ export interface ProductYarnComponent {
   rawMaterialId: number;
   rawMaterial?: RawMaterial;
   mixingPct: number;
+  // Yarn-dyed only: cost/kg to dye this slot.
+  dyeingCostPerKg?: number;
 }
 
 export interface ProductAccessory {
@@ -70,6 +79,8 @@ export interface ProductAccessory {
   accessoryType?: AccessoryType;
   costPerPiece: number;
 }
+
+export type ColorMethod = 'PIECE_DYED' | 'YARN_DYED';
 
 export interface Product {
   id: number;
@@ -84,6 +95,14 @@ export interface Product {
   weightLossPct: number;
   transportLocalPerKg: number;
   rejectionPct: number;
+  // Optional second, sequential rejection stage (garment items, e.g. bathrobes).
+  secondRejectionPct: number;
+  // Color method: PIECE_DYED (default, flat Processing Charge after weaving) or
+  // YARN_DYED (yarn dyed per-slot before weaving, washed after weaving instead).
+  colorMethod: ColorMethod;
+  yarnDyeingProcessLossPct: number;
+  washingCostPerKg: number;
+  washingLossPct: number;
   active: boolean;
   yarnComponents: ProductYarnComponent[];
   accessories: ProductAccessory[];
@@ -170,6 +189,7 @@ export interface QuoteLineSegmentYarn {
   rawMaterialId: number;
   rawMaterial?: RawMaterial;
   mixingPct: number;
+  dyeingCostPerKg?: number;
 }
 
 export interface QuoteLineSegmentItemAccessory {
@@ -191,6 +211,9 @@ export interface QuoteLineSegmentItem {
   itemType?: ItemType;
   lengthCm: number;
   widthCm: number;
+  // Garment items only (Item Type sizingMethod = FABRIC_CONSUMPTION, e.g. bathrobes) -
+  // fabric required per piece in sq.m, used instead of lengthCm x widthCm.
+  fabricConsumptionSqm?: number | null;
   gsm: number;
   qtyPerSet: number;
   hsnCodeId?: number | null;

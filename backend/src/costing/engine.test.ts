@@ -87,6 +87,146 @@ describe('computeCosting - 50x100 PDD White Bath Towel fixture', () => {
   });
 });
 
+// Fixture reverse-engineered from the uploaded "Greenline - RFQ-205453-Pool Towel" sheet
+// (yarn-dyed costing). Every intermediate value below is cross-checked against that
+// sheet's own cached formula results EXCEPT local transport, which is deliberately
+// anchored the same way piece-dyed already is (on G9, post-weaving-wastage) rather than
+// the sheet's own G4 (raw, pre-weaving BOM multiplier) - a confirmed, intentional choice,
+// not a copying error. See conversation history for the "do as piece dyed" decision.
+const fixtureYarnDyedTowel = {
+  colorMethod: 'YARN_DYED' as const,
+  weavingWastagePct: 0.03,
+  weavingSizingCostPerKg: 45,
+  firstVelourCharges: 0,
+  firstVelourLossPct: 0,
+  secondVelourCharges: 0,
+  secondVelourLossPct: 0,
+  transportLocalPerKg: 3,
+  rejectionPct: 0.04,
+  yarnDyeingProcessLossPct: 0.07,
+  washingCostPerKg: 25,
+  washingLossPct: 0.03,
+  yarnComponents: [
+    { slot: 'Ground1', mixingPct: 10, pricePerKg: 300, dyeingCostPerKg: 70 },
+    { slot: 'Ground2', mixingPct: 10, pricePerKg: 300, dyeingCostPerKg: 250 },
+    { slot: 'Pile1', mixingPct: 30, pricePerKg: 300, dyeingCostPerKg: 70 },
+    { slot: 'Pile2', mixingPct: 30, pricePerKg: 300, dyeingCostPerKg: 250 },
+    { slot: 'Weft1', mixingPct: 10, pricePerKg: 275, dyeingCostPerKg: 70 },
+    { slot: 'Weft2', mixingPct: 10, pricePerKg: 275, dyeingCostPerKg: 70 },
+  ],
+  stitchingCostPerKg: 25,
+  packingCostPerKg: 10,
+  accessories: [{ name: 'Wash Care', costPerPiece: 1.5 }],
+  freightExportPerKg: 13,
+  wcInterestPct: 0.01,
+  lcInterestPct: 0.01,
+  marginPct: 0.05,
+  commissionPct: 0,
+  lengthCm: 90,
+  widthCm: 180,
+  gsm: 600,
+  qtyPcs: 1,
+  exchangeRates: { INR: 1, USD: 95, GBP: 85 },
+};
+
+describe('computeCosting - yarn-dyed towel (Greenline RFQ fixture)', () => {
+  const result = computeCosting(fixtureYarnDyedTowel);
+
+  it('matches the sheet BOM multiplier (G4/J21)', () => {
+    expect(result.bomMultiplier).toBeCloseTo(1.190425852468715, 9);
+  });
+  it('matches the sheet yarn cost (F12)', () => {
+    expect(result.yarnCostPerKg).toBeCloseTo(351.17562647827094, 6);
+  });
+  it('matches the sheet dyeing cost (J12)', () => {
+    expect(result.dyeingCostPerKg).toBeCloseTo(169.04047105055753, 6);
+  });
+  it('matches the sheet weaving conversion charge (F16, via G15)', () => {
+    expect(result.weavingSizingCostPerKg).toBeCloseTo(48.32474226804125, 6);
+  });
+  it('matches the sheet washing charge in the processing-charge slot (F20, via G19)', () => {
+    expect(result.processingChargesPerKg).toBeCloseTo(26.847079037800693, 6);
+  });
+  it('matches the sheet accessories-per-kg (I37) and the finishing cost line after g19', () => {
+    expect(result.accessoriesPerKg).toBeCloseTo(1.5432098765432098, 9);
+    expect(result.stitchingPackingPerKg).toBeCloseTo(38.06584362139918, 6);
+  });
+  it('deliberately differs from the sheet on local transport (anchored on G9, not G4)', () => {
+    expect(result.transportLocalPerKg).toBeCloseTo(3.221649484536083, 6); // sheet shows 3.571...
+  });
+  it('produces a final price consistent with the above (not the reference sheet transport-G4 total)', () => {
+    expect(result.finalPricePerKgInr).toBeCloseTo(697.614541953942, 4);
+    expect(result.ratePerPiece.INR).toBeCloseTo(678.0813347792316, 3);
+  });
+});
+
+// Fixture reverse-engineered from the uploaded "Bhosale Bathrobe price working" sheet
+// (piece-dyed garment costing). Every intermediate value matches that sheet's own cached
+// results EXCEPT the finishing-cost tail, which deliberately treats packaging as a true
+// per-kg rate (scales with the garment's weight) rather than the sheet's own flat
+// per-piece figure - a confirmed, intentional choice from this conversation.
+const fixtureBathrobe = {
+  itemClass: 'GARMENT' as const,
+  weavingWastagePct: 0.025,
+  weavingSizingCostPerKg: 55,
+  firstVelourCharges: 0,
+  firstVelourLossPct: 0,
+  secondVelourCharges: 0,
+  secondVelourLossPct: 0.02,
+  transportLocalPerKg: 3,
+  rejectionPct: 0.01,
+  secondRejectionPct: 0.03,
+  processingChargeRatePerKg: 90,
+  weightLossPct: 0.08,
+  yarnComponents: [
+    { slot: 'Ground', mixingPct: 22, pricePerKg: 210 },
+    { slot: 'Pile', mixingPct: 62, pricePerKg: 265 },
+    { slot: 'Weft', mixingPct: 16, pricePerKg: 265 },
+  ],
+  stitchingCostPerPiece: 80,
+  packingCostPerKg: 10,
+  accessories: [
+    { name: 'Wash Care', costPerPiece: 1 },
+    { name: 'Shearing V neck', costPerPiece: 15 },
+  ],
+  freightExportPerKg: 13,
+  wcInterestPct: 0.01,
+  lcInterestPct: 0.01,
+  marginPct: 0,
+  commissionPct: 0,
+  fabricConsumptionSqm: 3.7,
+  gsm: 300,
+  qtyPcs: 1,
+  exchangeRates: { INR: 1, USD: 94.5, GBP: 85 },
+};
+
+describe('computeCosting - piece-dyed bathrobe (Bhosale fixture)', () => {
+  const result = computeCosting(fixtureBathrobe);
+
+  it('matches the sheet BOM multiplier, incl. both rejection stages (G8/J8)', () => {
+    expect(result.bomMultiplier).toBeCloseTo(1.1846077031451945, 9);
+  });
+  it('matches the sheet yarn cost (F8)', () => {
+    expect(result.yarnCostPerKg).toBeCloseTo(299.58728812541966, 6);
+  });
+  it('matches the sheet weaving conversion charge (F10)', () => {
+    expect(result.weavingSizingCostPerKg).toBeCloseTo(63.524588081161056, 6);
+  });
+  it('matches the sheet processing charge (F14)', () => {
+    expect(result.processingChargesPerKg).toBeCloseTo(103.94932595099081, 6);
+  });
+  it('matches the sheet piece weight from fabric consumption x GSM (Fabric Requirement/piece)', () => {
+    expect(result.pieceWeightGrams).toBeCloseTo(1110, 9); // 3.7 sqm x 300 gsm
+  });
+  it('deliberately differs from the sheet on packaging (a true per-kg rate, not flat per-piece)', () => {
+    expect(result.stitchingPackingPerKg).toBeCloseTo(100.47535820731696, 6); // sheet shows 110.38 (its own flat-per-piece packaging x g19)
+  });
+  it('produces a final price consistent with per-kg packaging (not the reference sheet flat-per-piece total)', () => {
+    expect(result.finalPricePerKgInr).toBeCloseTo(595.7264951500747, 4);
+    expect(result.ratePerPiece.INR).toBeCloseTo(661.2564096165829, 3);
+  });
+});
+
 describe('validateMixing', () => {
   it('accepts components that sum to 100%', () => {
     expect(validateMixing(fixture70x140.yarnComponents).ok).toBe(true);

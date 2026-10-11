@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../api';
-import type { ItemType } from '../types';
+import type { ItemType, SizingMethod } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
 
-const empty = { name: '', stitchingCostPerKg: 0, packingCostPerKg: 0 };
+const empty: { name: string; stitchingCostPerKg: number; packingCostPerKg: number; sizingMethod: SizingMethod; stitchingCostPerPiece: number } = {
+  name: '',
+  stitchingCostPerKg: 0,
+  packingCostPerKg: 0,
+  sizingMethod: 'DIMENSIONS',
+  stitchingCostPerPiece: 0,
+};
 
 export function ItemTypesPage() {
   const { user } = useAuth();
@@ -28,7 +34,13 @@ export function ItemTypesPage() {
   }
   function openEdit(it: ItemType) {
     setEditing(it);
-    setForm({ name: it.name, stitchingCostPerKg: it.stitchingCostPerKg, packingCostPerKg: it.packingCostPerKg });
+    setForm({
+      name: it.name,
+      stitchingCostPerKg: it.stitchingCostPerKg,
+      packingCostPerKg: it.packingCostPerKg,
+      sizingMethod: it.sizingMethod ?? 'DIMENSIONS',
+      stitchingCostPerPiece: it.stitchingCostPerPiece ?? 0,
+    });
     setShowForm(true);
   }
 
@@ -59,7 +71,8 @@ export function ItemTypesPage() {
           <thead>
             <tr>
               <th>Item Type</th>
-              <th className="right">Stitching Cost/Kg</th>
+              <th>Sizing</th>
+              <th className="right">Stitching Cost</th>
               <th className="right">Packing Cost/Kg</th>
               {canEdit && <th />}
             </tr>
@@ -68,7 +81,10 @@ export function ItemTypesPage() {
             {items.map((it) => (
               <tr key={it.id}>
                 <td>{it.name}</td>
-                <td className="right mono">₹{it.stitchingCostPerKg}</td>
+                <td>{it.sizingMethod === 'FABRIC_CONSUMPTION' ? 'Fabric consumption (garment)' : 'L x W (flat)'}</td>
+                <td className="right mono">
+                  {it.sizingMethod === 'FABRIC_CONSUMPTION' ? `₹${it.stitchingCostPerPiece}/pc` : `₹${it.stitchingCostPerKg}/kg`}
+                </td>
                 <td className="right mono">₹{it.packingCostPerKg}</td>
                 {canEdit && (
                   <td className="right">
@@ -91,14 +107,31 @@ export function ItemTypesPage() {
               <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Bath Towel" />
             </div>
             <div className="field">
-              <label>Stitching cost / kg (₹)</label>
-              <input type="number" value={form.stitchingCostPerKg} onChange={(e) => setForm({ ...form, stitchingCostPerKg: Number(e.target.value) })} />
+              <label>Sizing method</label>
+              <select value={form.sizingMethod} onChange={(e) => setForm({ ...form, sizingMethod: e.target.value as 'DIMENSIONS' | 'FABRIC_CONSUMPTION' })}>
+                <option value="DIMENSIONS">L x W x GSM (flat items, e.g. towels)</option>
+                <option value="FABRIC_CONSUMPTION">Fabric consumption x GSM (garments, e.g. bathrobes)</option>
+              </select>
             </div>
+            {form.sizingMethod === 'FABRIC_CONSUMPTION' ? (
+              <div className="field">
+                <label>Stitching cost / piece (₹)</label>
+                <input type="number" value={form.stitchingCostPerPiece} onChange={(e) => setForm({ ...form, stitchingCostPerPiece: Number(e.target.value) })} />
+              </div>
+            ) : (
+              <div className="field">
+                <label>Stitching cost / kg (₹)</label>
+                <input type="number" value={form.stitchingCostPerKg} onChange={(e) => setForm({ ...form, stitchingCostPerKg: Number(e.target.value) })} />
+              </div>
+            )}
             <div className="field">
               <label>Packing cost / kg (₹)</label>
               <input type="number" value={form.packingCostPerKg} onChange={(e) => setForm({ ...form, packingCostPerKg: Number(e.target.value) })} />
             </div>
           </div>
+          <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
+            Packing cost stays per-kg either way, by design - packaging scales with the item's actual weight.
+          </p>
           <div className="modal-actions">
             <button className="btn" onClick={() => setShowForm(false)}>
               Cancel

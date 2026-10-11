@@ -60,17 +60,19 @@ async function recomputeLine(quoteLineId: number) {
     quoteLineId,
     segments: allSegments.map((s) => ({
       productId: s.productId,
-      yarnComponents: s.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })),
+      yarnComponents: s.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg })),
       items: s.items.map((it) => ({
         itemTypeId: it.itemTypeId,
         lengthCm: it.lengthCm,
         widthCm: it.widthCm,
+        fabricConsumptionSqm: it.fabricConsumptionSqm,
         gsm: it.gsm,
         qtyPerSet: it.qtyPerSet,
         hsnCodeId: it.hsnCodeId,
         accessoryOverrides: it.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })),
         packagingCharges: it.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })),
         stitchingCostPerKgOverride: it.stitchingCostPerKgOverride,
+        stitchingCostPerPieceOverride: it.stitchingCostPerPieceOverride,
         packingCostPerKgOverride: it.packingCostPerKgOverride,
       })),
     })),
@@ -333,6 +335,7 @@ quotesRouter.post('/:id/import-costsheet', requireRole('SUPERVISOR', 'ADMIN'), u
   const segmentProcessValues = new Map<number, SegmentProcessBucket>(); // segmentId -> values seen across its items
   interface ItemProcessUpdate {
     stitchingCostPerKgOverride?: number;
+    stitchingCostPerPieceOverride?: number;
     packingCostPerKgOverride?: number;
   }
   const itemProcessChanges = new Map<number, ItemProcessUpdate>();
@@ -669,8 +672,12 @@ const itemPackagingChargeSchema = z.object({ description: z.string().min(1), rat
 
 const itemSchema = z.object({
   itemTypeId: z.number().int().positive(),
-  lengthCm: z.number().positive(),
-  widthCm: z.number().positive(),
+  // Flat items (towels): both required, L x W x GSM drives piece weight. Garment items
+  // (bathrobes): left at 0 (sentinel), fabricConsumptionSqm drives piece weight instead -
+  // see schema.prisma.
+  lengthCm: z.number().nonnegative().default(0),
+  widthCm: z.number().nonnegative().default(0),
+  fabricConsumptionSqm: z.number().positive().optional(),
   gsm: z.number().positive(),
   qtyPerSet: z.number().int().positive(),
   hsnCodeId: z.number().int().positive().nullable().optional(),
@@ -682,6 +689,8 @@ const segmentYarnSchema = z.object({
   slot: z.string().min(1),
   rawMaterialId: z.number().int().positive(),
   mixingPct: z.number().positive(),
+  // Yarn-dyed only: cost/kg to dye this slot - see schema.prisma.
+  dyeingCostPerKg: z.number().nonnegative().optional(),
 });
 
 const segmentSchema = z.object({
@@ -723,6 +732,7 @@ function buildSegmentsCreateInput(segments: Awaited<ReturnType<typeof computeSet
         itemTypeId: item.itemTypeId,
         lengthCm: item.lengthCm,
         widthCm: item.widthCm,
+        fabricConsumptionSqm: item.fabricConsumptionSqm ?? undefined,
         gsm: item.gsm,
         qtyPerSet: item.qtyPerSet,
         hsnCodeId: item.hsnCodeId ?? undefined,
@@ -843,11 +853,12 @@ type LineWithSegmentsForTemplate = {
   segments: {
     productId: number;
     sortOrder: number;
-    yarnComponents: { slot: string; rawMaterialId: number; mixingPct: number }[];
+    yarnComponents: { slot: string; rawMaterialId: number; mixingPct: number; dyeingCostPerKg: number }[];
     items: {
       itemTypeId: number;
       lengthCm: number;
       widthCm: number;
+      fabricConsumptionSqm: number | null;
       gsm: number;
       qtyPerSet: number;
       accessoryOverrides: { accessoryTypeId: number; costPerPiece: number }[];
@@ -868,12 +879,15 @@ async function createTemplateFromLine(line: LineWithSegmentsForTemplate, custome
         create: line.segments.map((seg, i) => ({
           productId: seg.productId,
           sortOrder: i,
-          yarnComponents: { create: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct })) },
+          yarnComponents: {
+            create: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg })),
+          },
           items: {
             create: seg.items.map((item) => ({
               itemTypeId: item.itemTypeId,
               lengthCm: item.lengthCm,
               widthCm: item.widthCm,
+              fabricConsumptionSqm: item.fabricConsumptionSqm,
               gsm: item.gsm,
               qtyPerSet: item.qtyPerSet,
               accessoryOverrides: item.accessoryOverrides.length

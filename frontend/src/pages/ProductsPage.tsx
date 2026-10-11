@@ -41,6 +41,7 @@ export function ProductsPage() {
             <tr>
               <th>Code</th>
               <th>Name</th>
+              <th>Color method</th>
               <th>Yarn Recipe</th>
               <th className="right">Weaving Wastage %</th>
               <th className="right">Rejection %</th>
@@ -54,6 +55,11 @@ export function ProductsPage() {
                   <strong>{p.code}</strong>
                 </td>
                 <td className="muted">{p.name}</td>
+                <td>
+                  <span className={p.colorMethod === 'YARN_DYED' ? 'badge approved' : 'badge'}>
+                    {p.colorMethod === 'YARN_DYED' ? 'Yarn dyed' : 'Piece dyed'}
+                  </span>
+                </td>
                 <td className="muted">
                   {p.yarnComponents.map((c) => `${c.slot} ${c.mixingPct}%`).join(', ')}
                 </td>

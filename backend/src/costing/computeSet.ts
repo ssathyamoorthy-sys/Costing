@@ -15,6 +15,9 @@ export interface ItemInput {
   itemTypeId: number;
   lengthCm: number;
   widthCm: number;
+  // Garment items only (Item Type sizingMethod = FABRIC_CONSUMPTION, e.g. bathrobes) -
+  // fabric required per piece in sq.m, used instead of lengthCm x widthCm.
+  fabricConsumptionSqm?: number | null;
   gsm: number;
   qtyPerSet: number;
   hsnCodeId?: number | null;
@@ -22,12 +25,15 @@ export interface ItemInput {
   packagingCharges?: ItemPackagingChargeInput[];
   // Per-item overrides of the Item Type master's stitching/packing cost - see schema.prisma.
   stitchingCostPerKgOverride?: number | null;
+  stitchingCostPerPieceOverride?: number | null;
   packingCostPerKgOverride?: number | null;
 }
 export interface SegmentYarnInput {
   slot: string;
   rawMaterialId: number;
   mixingPct: number;
+  // Yarn-dyed only: cost/kg to dye this slot - see schema.prisma.
+  dyeingCostPerKg?: number;
 }
 export interface SegmentInput {
   productId: number;
@@ -84,13 +90,6 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
   }
   const freightExportPerKg = quote.freightExportPerKgOverride ?? masterFreightExportPerKg;
 
-  const processingCharge = await prisma.processingCharge.findFirst({ where: { color: { equals: input.color } } });
-  if (!processingCharge) {
-    throw new Error(`No processing charge configured for color "${input.color}". Add it in General Mapping first.`);
-  }
-  // Per-Set override wins over the Processing Charge master (see schema.prisma).
-  const processingChargeRatePerKg = line?.processingChargeRatePerKgOverride ?? processingCharge.ratePerKg;
-
   const allRates = await getCurrentExchangeRates();
   const exchangeRates: Record<string, number> = { INR: 1 };
   if (quote.currency !== 'INR') {
@@ -130,17 +129,34 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
     const firstVelourCharges = matchedExisting?.firstVelourChargesOverride ?? product.firstVelourCharges;
     const secondVelourCharges = matchedExisting?.secondVelourChargesOverride ?? product.secondVelourCharges;
     const transportLocalPerKg = matchedExisting?.transportLocalPerKgOverride ?? product.transportLocalPerKg;
+    const washingCostPerKg = matchedExisting?.washingCostPerKgOverride ?? product.washingCostPerKg;
+
+    const isYarnDyed = product.colorMethod === 'YARN_DYED';
+    // Piece-dyed only: the flat Processing Charge master (by color) - yarn-dyed products
+    // dye the yarn itself instead (dyeingCostPerKg per slot, resolved by the caller into
+    // segInput.yarnComponents), so this lookup - and its "configure it first" requirement -
+    // simply doesn't apply to them.
+    let processingChargeRatePerKg = 0;
+    if (!isYarnDyed) {
+      const processingCharge = await prisma.processingCharge.findFirst({ where: { color: { equals: input.color } } });
+      if (!processingCharge) {
+        throw new Error(`No processing charge configured for color "${input.color}". Add it in General Mapping first.`);
+      }
+      // Per-Set override wins over the Processing Charge master (see schema.prisma).
+      processingChargeRatePerKg = line?.processingChargeRatePerKgOverride ?? processingCharge.ratePerKg;
+    }
 
     const mixingTotal = segInput.yarnComponents.reduce((s, c) => s + c.mixingPct, 0);
     if (Math.abs(mixingTotal - 100) > 0.5) {
       warnings.push(`${product.code}: yarn mixing % totals ${mixingTotal.toFixed(1)}, expected 100.`);
     }
 
-    const resolvedYarn: { slot: string; mixingPct: number; pricePerKg: number }[] = [];
+    const resolvedYarn: { slot: string; mixingPct: number; pricePerKg: number; dyeingCostPerKg: number }[] = [];
     for (const c of segInput.yarnComponents) {
+      const dyeingCostPerKg = c.dyeingCostPerKg ?? 0;
       const override = overrideByMaterialId.get(c.rawMaterialId);
       if (override != null) {
-        resolvedYarn.push({ slot: c.slot, mixingPct: c.mixingPct, pricePerKg: override });
+        resolvedYarn.push({ slot: c.slot, mixingPct: c.mixingPct, pricePerKg: override, dyeingCostPerKg });
         continue;
       }
       const resolved = await resolveCurrentRate(c.rawMaterialId);
@@ -154,7 +170,7 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
           `Rate for "${material?.code}" expired on ${resolved.validTo?.toDateString()} - using last known price ${resolved.pricePerKg}/kg.`,
         );
       }
-      resolvedYarn.push({ slot: c.slot, mixingPct: c.mixingPct, pricePerKg: resolved.pricePerKg });
+      resolvedYarn.push({ slot: c.slot, mixingPct: c.mixingPct, pricePerKg: resolved.pricePerKg, dyeingCostPerKg });
     }
 
     const computedItems: ComputedItem[] = [];
@@ -187,19 +203,28 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         }
       }
 
+      const isGarment = itemType.sizingMethod === 'FABRIC_CONSUMPTION';
+
       const breakup = computeCosting({
+        colorMethod: isYarnDyed ? 'YARN_DYED' : 'PIECE_DYED',
+        itemClass: isGarment ? 'GARMENT' : 'FLAT',
         weavingWastagePct: product.weavingWastagePct,
         weavingSizingCostPerKg,
         firstVelourCharges,
         firstVelourLossPct: product.firstVelourLossPct,
         secondVelourCharges,
         secondVelourLossPct: product.secondVelourLossPct,
-        weightLossPct: product.weightLossPct,
         transportLocalPerKg,
         rejectionPct: product.rejectionPct,
+        secondRejectionPct: product.secondRejectionPct,
         yarnComponents: resolvedYarn,
         processingChargeRatePerKg,
+        weightLossPct: product.weightLossPct,
+        yarnDyeingProcessLossPct: product.yarnDyeingProcessLossPct,
+        washingCostPerKg,
+        washingLossPct: product.washingLossPct,
         stitchingCostPerKg: itemInput.stitchingCostPerKgOverride ?? itemType.stitchingCostPerKg,
+        stitchingCostPerPiece: itemInput.stitchingCostPerPieceOverride ?? itemType.stitchingCostPerPiece,
         packingCostPerKg: itemInput.packingCostPerKgOverride ?? itemType.packingCostPerKg,
         accessories: finalAccessories,
         freightExportPerKg,
@@ -209,6 +234,7 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         commissionPct: quote.commissionPctOverride ?? customer.commissionPct,
         lengthCm: itemInput.lengthCm,
         widthCm: itemInput.widthCm,
+        fabricConsumptionSqm: itemInput.fabricConsumptionSqm ?? 0,
         gsm: itemInput.gsm,
         qtyPcs: itemInput.qtyPerSet,
         exchangeRates,

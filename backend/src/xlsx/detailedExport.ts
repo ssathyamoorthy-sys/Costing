@@ -6,6 +6,8 @@ export interface ItemSheetYarnRow {
   mixingPct: number;
   pricePerKg: number;
   overrideNote?: string | null;
+  // Yarn-dyed only: cost/kg to dye this slot.
+  dyeingCostPerKg?: number;
 }
 export interface ItemSheetAccessoryRow {
   name: string;
@@ -22,25 +24,52 @@ export interface ItemSheetContext {
   currency: string;
   exchangeRateToInr: number; // INR value of 1 unit of `currency`; 1 for INR itself
 
+  // PIECE_DYED (default): fabric is dyed as one piece after weaving, via a flat
+  // Processing Charge. YARN_DYED: the yarn is dyed before weaving - each yarn row
+  // carries its own dyeingCostPerKg instead, there's a yarn dyeing process loss stage
+  // before weaving, and washing (washingCostPerKg/washingLossPct) replaces the
+  // processing-charge stage, in the same chain position.
+  colorMethod: 'PIECE_DYED' | 'YARN_DYED';
+  // FLAT (default): sized by length x width x GSM (towels). GARMENT: sized by fabric
+  // consumption in sq.m instead (bathrobes) - stitching becomes a flat per-piece cost, an
+  // optional second sequential rejection stage is available, and export freight is costed
+  // directly off the piece's own weight rather than the kg-chain's post-rejection yield.
+  itemClass: 'FLAT' | 'GARMENT';
+
+  // FLAT items only
   lengthCm: number;
   widthCm: number;
+  // GARMENT items only
+  fabricConsumptionSqm: number;
   gsm: number;
   qtyPerSet: number;
 
   weavingWastagePct: number;
   firstVelourLossPct: number;
+  // PIECE_DYED only (paired with processingChargeRatePerKg)
   weightLossPct: number;
+  // YARN_DYED only (paired with washingCostPerKg, same chain position as weightLossPct)
+  washingLossPct: number;
   secondVelourLossPct: number;
   rejectionPct: number;
+  // GARMENT only
+  secondRejectionPct: number;
+  // YARN_DYED only
+  yarnDyeingProcessLossPct: number;
 
   yarnRows: ItemSheetYarnRow[];
 
   weavingSizingCostPerKg: number;
   firstVelourCharges: number;
+  // PIECE_DYED only (color-driven)
   processingChargeRatePerKg: number;
+  // YARN_DYED only (replaces processingChargeRatePerKg in the same chain position)
+  washingCostPerKg: number;
   secondVelourCharges: number;
   transportLocalPerKg: number;
+  // FLAT items use stitchingCostPerKg; GARMENT items use stitchingCostPerPiece instead.
   stitchingCostPerKg: number;
+  stitchingCostPerPiece: number;
   packingCostPerKg: number;
 
   accessoryRows: ItemSheetAccessoryRow[];
@@ -64,19 +93,24 @@ const SECTION_FONT = { bold: true, italic: true };
 
 /**
  * Writes one item's full cost chain to a worksheet as LIVE FORMULAS (a direct port of
- * costing/engine.ts's computeCosting, row for row) - every derived cell references the
- * input cells above it, so a supervisor can edit an input (a wastage %, a yarn price, a
- * margin) directly in Excel and watch the final price recalculate, exactly like the
- * original "Price Working.xlsx". Returns the address of the sheet's two headline
- * outputs (Rate/Kg and Rate/Piece in the quote's currency) for the summary sheet to
- * reference.
+ * costing/engine.ts's computeCosting, row for row, including its yarn-dyed and garment
+ * branches) - every derived cell references the input cells above it, so a supervisor can
+ * edit an input (a wastage %, a yarn price, a margin) directly in Excel and watch the final
+ * price recalculate, exactly like the original "Price Working.xlsx". Returns the address of
+ * the sheet's two headline outputs (Rate/Kg and Rate/Piece in the quote's currency) for the
+ * summary sheet to reference.
  */
 export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { rateKgCell: string; ratePieceCell: string } {
+  const isYarnDyed = ctx.colorMethod === 'YARN_DYED';
+  const isGarment = ctx.itemClass === 'GARMENT';
+
   ws.getColumn(1).width = 34;
   ws.getColumn(2).width = 14;
   ws.getColumn(3).width = 14;
   ws.getColumn(4).width = 14;
   ws.getColumn(5).width = 20;
+  ws.getColumn(6).width = 16;
+  ws.getColumn(7).width = 22;
 
   let r = 1;
   const put = (row: number, col: number, value: ExcelJS.CellValue) => {
@@ -112,21 +146,39 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 2, ctx.color);
   put(r, 3, 'Currency');
   put(r, 4, ctx.currency);
+  r += 1;
+  put(r, 1, 'Color method');
+  put(r, 2, isYarnDyed ? 'Yarn dyed' : 'Piece dyed');
+  put(r, 3, 'Item class');
+  put(r, 4, isGarment ? 'Garment (fabric consumption)' : 'Flat (L x W)');
   r += 2;
 
   // --- Size & weight ---
-  put(r, 1, 'Length (cm)');
-  const lengthCell = put(r, 2, ctx.lengthCm);
-  r++;
-  put(r, 1, 'Width (cm)');
-  const widthCell = put(r, 2, ctx.widthCm);
-  r++;
-  put(r, 1, 'GSM');
-  const gsmCell = put(r, 2, ctx.gsm);
-  r++;
-  put(r, 1, 'Piece Weight (g)');
-  const pieceWeightCell = put(r, 2, { formula: `${lengthCell}*${widthCell}*${gsmCell}/10000` } as any);
-  r++;
+  let pieceWeightCell: string;
+  if (isGarment) {
+    put(r, 1, 'Fabric consumption (sqm/pc)');
+    const fabricCell = put(r, 2, ctx.fabricConsumptionSqm);
+    r++;
+    put(r, 1, 'GSM');
+    const gsmCell = put(r, 2, ctx.gsm);
+    r++;
+    put(r, 1, 'Piece Weight (g)');
+    pieceWeightCell = put(r, 2, { formula: `${fabricCell}*${gsmCell}` } as any);
+    r++;
+  } else {
+    put(r, 1, 'Length (cm)');
+    const lengthCell = put(r, 2, ctx.lengthCm);
+    r++;
+    put(r, 1, 'Width (cm)');
+    const widthCell = put(r, 2, ctx.widthCm);
+    r++;
+    put(r, 1, 'GSM');
+    const gsmCell = put(r, 2, ctx.gsm);
+    r++;
+    put(r, 1, 'Piece Weight (g)');
+    pieceWeightCell = put(r, 2, { formula: `${lengthCell}*${widthCell}*${gsmCell}/10000` } as any);
+    r++;
+  }
   put(r, 1, 'Qty / Set (pcs)');
   const qtyPerSetCell = put(r, 2, ctx.qtyPerSet);
   r++;
@@ -138,21 +190,34 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 1, 'PROCESS PARAMETERS');
   ws.getCell(r, 1).font = SECTION_FONT;
   r++;
+  let yarnDyeingLossCell = '';
+  if (isYarnDyed) {
+    put(r, 1, 'Yarn dyeing process loss %');
+    yarnDyeingLossCell = putPct(r, 2, ctx.yarnDyeingProcessLossPct);
+    r++;
+  }
   put(r, 1, 'Weaving wastage %');
   const weavingWastageCell = putPct(r, 2, ctx.weavingWastagePct);
   r++;
   put(r, 1, 'First velour loss %');
   const firstVelourLossCell = putPct(r, 2, ctx.firstVelourLossPct);
   r++;
-  put(r, 1, 'Weight loss %');
-  const weightLossCell = putPct(r, 2, ctx.weightLossPct);
+  put(r, 1, isYarnDyed ? 'Washing loss %' : 'Weight loss %');
+  const processingOrWashingLossCell = putPct(r, 2, isYarnDyed ? ctx.washingLossPct : ctx.weightLossPct);
   r++;
   put(r, 1, 'Second velour loss %');
   const secondVelourLossCell = putPct(r, 2, ctx.secondVelourLossPct);
   r++;
   put(r, 1, 'Rejection %');
   const rejectionCell = putPct(r, 2, ctx.rejectionPct);
-  r += 2;
+  r++;
+  let secondRejectionCell = '';
+  if (isGarment) {
+    put(r, 1, 'Second rejection %');
+    secondRejectionCell = putPct(r, 2, ctx.secondRejectionPct);
+    r++;
+  }
+  r += 1;
 
   // --- BOM waste-compounding multiplier chain ---
   put(r, 1, 'BOM MULTIPLIER CHAIN (how much input material is needed upstream to yield 1kg good output)');
@@ -161,22 +226,36 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 1, 'Base (J2)');
   const j2Cell = put(r, 2, 1);
   r++;
+  let baseCell = j2Cell;
+  if (isYarnDyed) {
+    put(r, 1, 'After yarn dyeing process loss (J2b)');
+    baseCell = put(r, 2, { formula: `${j2Cell}/(1-${yarnDyeingLossCell})` } as any);
+    r++;
+  }
   put(r, 1, 'After weaving wastage (J3)');
-  const j3Cell = put(r, 2, { formula: `${j2Cell}/(1-${weavingWastageCell})` } as any);
+  const j3Cell = put(r, 2, { formula: `${baseCell}/(1-${weavingWastageCell})` } as any);
   r++;
   put(r, 1, 'After first velour loss (J4)');
   const j4Cell = put(r, 2, { formula: `${j3Cell}/(1-${firstVelourLossCell})` } as any);
   r++;
-  put(r, 1, 'After weight loss (J5)');
-  const j5Cell = put(r, 2, { formula: `${j4Cell}/(1-${weightLossCell})` } as any);
+  put(r, 1, isYarnDyed ? 'After washing loss (J5)' : 'After weight loss (J5)');
+  const j5Cell = put(r, 2, { formula: `${j4Cell}/(1-${processingOrWashingLossCell})` } as any);
   r++;
   put(r, 1, 'After second velour loss (J6)');
   const j6Cell = put(r, 2, { formula: `${j5Cell}/(1-${secondVelourLossCell})` } as any);
   r++;
-  put(r, 1, 'BOM Multiplier (J7, after rejection)');
-  const bomMultiplierCell = put(r, 2, { formula: `${j6Cell}/(1-${rejectionCell})` } as any);
-  ws.getCell(r, 2).font = LABEL_FONT;
-  r += 2;
+  put(r, 1, isGarment ? 'After rejection (J7)' : 'BOM Multiplier (J7, after rejection)');
+  const j7Cell = put(r, 2, { formula: `${j6Cell}/(1-${rejectionCell})` } as any);
+  if (!isGarment) ws.getCell(r, 2).font = LABEL_FONT;
+  r++;
+  let bomMultiplierCell = j7Cell;
+  if (isGarment) {
+    put(r, 1, 'BOM Multiplier (after second rejection)');
+    bomMultiplierCell = put(r, 2, { formula: `${j7Cell}/(1-${secondRejectionCell})` } as any);
+    ws.getCell(r, 2).font = LABEL_FONT;
+    r++;
+  }
+  r += 1;
 
   // --- Running yield chain (G column) ---
   put(r, 1, 'YIELD CHAIN (running good-material yield after each stage)');
@@ -185,14 +264,20 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 1, 'G8 (= BOM Multiplier)');
   const g8Cell = put(r, 2, { formula: `${bomMultiplierCell}` } as any);
   r++;
+  let gAfterDyeingCell = g8Cell;
+  if (isYarnDyed) {
+    put(r, 1, 'G8b (after yarn dyeing process loss)');
+    gAfterDyeingCell = put(r, 2, { formula: `${g8Cell}-${g8Cell}*${yarnDyeingLossCell}` } as any);
+    r++;
+  }
   put(r, 1, 'G9 (after weaving wastage)');
-  const g9Cell = put(r, 2, { formula: `${g8Cell}-${g8Cell}*${weavingWastageCell}` } as any);
+  const g9Cell = put(r, 2, { formula: `${gAfterDyeingCell}-${gAfterDyeingCell}*${weavingWastageCell}` } as any);
   r++;
   put(r, 1, 'G13 (after first velour loss)');
   const g13Cell = put(r, 2, { formula: `${g9Cell}-${g9Cell}*${firstVelourLossCell}` } as any);
   r++;
-  put(r, 1, 'G16 (after weight loss)');
-  const g16Cell = put(r, 2, { formula: `${g13Cell}-${g13Cell}*${weightLossCell}` } as any);
+  put(r, 1, isYarnDyed ? 'G16 (after washing loss)' : 'G16 (after weight loss)');
+  const g16Cell = put(r, 2, { formula: `${g13Cell}-${g13Cell}*${processingOrWashingLossCell}` } as any);
   r++;
   put(r, 1, 'G19 (after second velour loss)');
   const g19Cell = put(r, 2, { formula: `${g16Cell}-${g16Cell}*${secondVelourLossCell}` } as any);
@@ -205,7 +290,10 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 1, 'YARN RATES');
   ws.getCell(r, 1).font = SECTION_FONT;
   r++;
-  ['Slot', 'Material', 'Mixing %', 'Price/Kg', 'Contribution (Rs/Kg)'].forEach((h, i) => {
+  const yarnHeaders = isYarnDyed
+    ? ['Slot', 'Material', 'Mixing %', 'Price/Kg', 'Contribution (Rs/Kg)', 'Dyeing cost/Kg', 'Dyeing contribution (Rs/Kg)']
+    : ['Slot', 'Material', 'Mixing %', 'Price/Kg', 'Contribution (Rs/Kg)'];
+  yarnHeaders.forEach((h, i) => {
     put(r, i + 1, h);
     ws.getCell(r, i + 1).font = LABEL_FONT;
   });
@@ -218,6 +306,10 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
     ws.getCell(r, 3).numFmt = '0.00"%"';
     putMoney(r, 4, y.pricePerKg);
     putMoney(r, 5, { formula: `${bomMultiplierCell}*D${r}*C${r}/100` } as any);
+    if (isYarnDyed) {
+      putMoney(r, 6, y.dyeingCostPerKg ?? 0);
+      putMoney(r, 7, { formula: `${bomMultiplierCell}*F${r}*C${r}/100` } as any);
+    }
     r++;
   }
   const yarnLastRow = r - 1;
@@ -229,7 +321,16 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   ws.getCell(r, 1).font = LABEL_FONT;
   const yarnCostCell = putMoney(r, 5, { formula: `SUM(E${yarnFirstRow}:E${yarnLastRow})` } as any);
   ws.getCell(r, 5).font = LABEL_FONT;
-  r += 2;
+  r++;
+  let dyeingCostCell: string | null = null;
+  if (isYarnDyed) {
+    put(r, 1, 'Dyeing cost / Kg');
+    ws.getCell(r, 1).font = LABEL_FONT;
+    dyeingCostCell = putMoney(r, 7, { formula: `SUM(G${yarnFirstRow}:G${yarnLastRow})` } as any);
+    ws.getCell(r, 7).font = LABEL_FONT;
+    r++;
+  }
+  r += 1;
 
   // --- Remaining process-cost inputs ---
   put(r, 1, 'Weaving + sizing cost / Kg');
@@ -238,8 +339,8 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 1, 'First velour charges / Kg');
   const firstVelourChargesCell = putMoney(r, 2, ctx.firstVelourCharges);
   r++;
-  put(r, 1, 'Processing charge / Kg (color)');
-  const processingChargeCell = putMoney(r, 2, ctx.processingChargeRatePerKg);
+  put(r, 1, isYarnDyed ? 'Washing cost / Kg' : 'Processing charge / Kg (color)');
+  const processingOrWashingRateCell = putMoney(r, 2, isYarnDyed ? ctx.washingCostPerKg : ctx.processingChargeRatePerKg);
   r++;
   put(r, 1, 'Second velour charges / Kg');
   const secondVelourChargesCell = putMoney(r, 2, ctx.secondVelourCharges);
@@ -247,9 +348,17 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 1, 'Local transport / Kg');
   const transportCell = putMoney(r, 2, ctx.transportLocalPerKg);
   r++;
-  put(r, 1, 'Stitching cost / Kg');
-  const stitchingCostCell = putMoney(r, 2, ctx.stitchingCostPerKg);
-  r++;
+  let stitchingCostCell = '';
+  let stitchingPerPieceCell = '';
+  if (isGarment) {
+    put(r, 1, 'Stitching cost / Piece');
+    stitchingPerPieceCell = putMoney(r, 2, ctx.stitchingCostPerPiece);
+    r++;
+  } else {
+    put(r, 1, 'Stitching cost / Kg');
+    stitchingCostCell = putMoney(r, 2, ctx.stitchingCostPerKg);
+    r++;
+  }
   put(r, 1, 'Packing cost / Kg');
   const packingCostCell = putMoney(r, 2, ctx.packingCostPerKg);
   r += 2;
@@ -290,6 +399,12 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 1, 'Yarn cost');
   const f_yarn = putMoney(r, 2, { formula: `${yarnCostCell}` } as any);
   r++;
+  let f_dyeing = '0';
+  if (isYarnDyed && dyeingCostCell) {
+    put(r, 1, 'Dyeing cost');
+    f_dyeing = putMoney(r, 2, { formula: `${dyeingCostCell}` } as any);
+    r++;
+  }
   put(r, 1, 'Weaving + sizing cost (F10)');
   const f10 = putMoney(r, 2, { formula: `${g9Cell}*${weavingSizingCostCell}` } as any);
   r++;
@@ -297,10 +412,10 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   const f11 = putMoney(r, 2, { formula: `${g9Cell}*${firstVelourChargesCell}` } as any);
   r++;
   put(r, 1, 'Subtotal after weaving (F12)');
-  const f12 = putMoney(r, 2, { formula: `${f_yarn}+${f10}+${f11}` } as any);
+  const f12 = putMoney(r, 2, { formula: `${f_yarn}+${f_dyeing}+${f10}+${f11}` } as any);
   r++;
-  put(r, 1, 'Processing charges - color (F14)');
-  const f14 = putMoney(r, 2, { formula: `${g13Cell}*${processingChargeCell}` } as any);
+  put(r, 1, isYarnDyed ? 'Washing charges (F14)' : 'Processing charges - color (F14)');
+  const f14 = putMoney(r, 2, { formula: `${g13Cell}*${processingOrWashingRateCell}` } as any);
   r++;
   put(r, 1, 'Subtotal after processing (F15)');
   const f15 = putMoney(r, 2, { formula: `${f12}+${f14}` } as any);
@@ -315,7 +430,10 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   const f20 = putMoney(r, 2, { formula: `${transportCell}*${g9Cell}` } as any);
   r++;
   put(r, 1, 'Stitching + packing + accessories (F21)');
-  const f21 = putMoney(r, 2, { formula: `${g19Cell}*(${stitchingCostCell}+${packingCostCell}+${accessoriesPerKgCell})` } as any);
+  const stitchingTermFormula = isGarment
+    ? `IF(${pieceWeightCell}>0,(1000/${pieceWeightCell})*${stitchingPerPieceCell},0)`
+    : `${stitchingCostCell}`;
+  const f21 = putMoney(r, 2, { formula: `${g19Cell}*((${stitchingTermFormula})+${packingCostCell}+${accessoriesPerKgCell})` } as any);
   r++;
   put(r, 1, 'Subtotal after stitching (F22)');
   const f22 = putMoney(r, 2, { formula: `${f18}+${f20}+${f21}` } as any);
@@ -360,7 +478,11 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   const f25 = putMoney(r, 2, { formula: `${f22}/(1-${wcCell})-${f22}` } as any);
   r++;
   put(r, 1, 'Export freight (F26)');
-  const f26 = putMoney(r, 2, { formula: `${freightCell}*${g23Cell}` } as any);
+  const f26 = putMoney(
+    r,
+    2,
+    isGarment ? ({ formula: `${freightCell}` } as any) : ({ formula: `${freightCell}*${g23Cell}` } as any),
+  );
   r++;
   put(r, 1, 'Subtotal after freight (F27)');
   const f27 = putMoney(r, 2, { formula: `${f22}+${f25}+${f26}` } as any);
