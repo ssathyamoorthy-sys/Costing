@@ -23,7 +23,8 @@ type ReportId =
   | 'locked-register'
   | 'approval-turnaround'
   | 'raw-material-history'
-  | 'master-data';
+  | 'master-data'
+  | 'change-log';
 
 const REPORTS: { id: ReportId; label: string; group: string }[] = [
   { id: 'pipeline-summary', label: 'Quote Pipeline Summary', group: 'Sales & Pipeline' },
@@ -39,6 +40,7 @@ const REPORTS: { id: ReportId; label: string; group: string }[] = [
   { id: 'approval-turnaround', label: 'Approval Turnaround', group: 'Operational' },
   { id: 'raw-material-history', label: 'Raw Material Rate History', group: 'Operational' },
   { id: 'master-data', label: 'Master Data Export', group: 'Operational' },
+  { id: 'change-log', label: 'Master Data Change Log', group: 'Operational' },
 ];
 const GROUPS = ['Sales & Pipeline', 'Pricing & Margin', 'Operational'];
 
@@ -844,6 +846,99 @@ function CurrentPricingByCustomerReport() {
   );
 }
 
+// --- 14. Master data change log ---
+const AUDIT_ENTITY_TYPES: { value: string; label: string }[] = [
+  { value: 'Product', label: 'Product Master' },
+  { value: 'Customer', label: 'Customer Master' },
+  { value: 'ProcessingCharge', label: 'Processing Charges' },
+  { value: 'HsnCode', label: 'HSN Master' },
+  { value: 'ExchangeRate', label: 'Exchange Rates' },
+  { value: 'GeneralSetting', label: 'General Mapping' },
+];
+interface ChangeLogRow {
+  id: number;
+  entityId: number;
+  entityLabel: string;
+  action: 'CREATE' | 'UPDATE';
+  changes: { field: string; oldValue: unknown; newValue: unknown }[];
+  changedBy: string;
+  createdAt: string;
+}
+function formatChangeValue(v: unknown): string {
+  if (v === null || v === undefined) return '-';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  return String(v);
+}
+function ChangeLogReport() {
+  const [entityType, setEntityType] = useState('Product');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [rows, setRows] = useState<ChangeLogRow[]>([]);
+  useEffect(() => {
+    const qs = new URLSearchParams({ entityType });
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    api.get<ChangeLogRow[]>(`/reports/change-log?${qs}`).then(setRows);
+  }, [entityType, from, to]);
+
+  return (
+    <div>
+      <div className="tag-row" style={{ marginBottom: 12, alignItems: 'flex-end' }}>
+        <div className="field" style={{ maxWidth: 260 }}>
+          <label>Master</label>
+          <select value={entityType} onChange={(e) => setEntityType(e.target.value)}>
+            {AUDIT_ENTITY_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Changed by</th>
+            <th>Action</th>
+            <th>Record</th>
+            <th>Changes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id}>
+              <td className="muted">{dt(r.createdAt)}</td>
+              <td>{r.changedBy}</td>
+              <td>
+                <span className={`badge ${r.action === 'CREATE' ? 'approved' : 'pending'}`}>{r.action === 'CREATE' ? 'Created' : 'Updated'}</span>
+              </td>
+              <td>{r.entityLabel}</td>
+              <td style={{ fontSize: 12 }}>
+                {r.changes.length === 0
+                  ? '-'
+                  : r.changes.map((c, i) => (
+                      <div key={i}>
+                        <strong>{c.field}</strong>: {formatChangeValue(c.oldValue)} → {formatChangeValue(c.newValue)}
+                      </div>
+                    ))}
+              </td>
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={5} className="muted">
+                No changes logged for this master in range.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ReportBody({ id }: { id: ReportId }) {
   switch (id) {
     case 'pipeline-summary':
@@ -872,6 +967,8 @@ function ReportBody({ id }: { id: ReportId }) {
       return <RawMaterialHistoryReport />;
     case 'master-data':
       return <MasterDataReport />;
+    case 'change-log':
+      return <ChangeLogReport />;
   }
 }
 

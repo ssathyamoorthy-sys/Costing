@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { buildWorkbook, parseWorkbookSheet } from '../xlsx/helpers';
+import { recordAuditLog } from '../lib/auditLog';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -115,17 +116,39 @@ customersRouter.post('/', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) =
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { countries, ...rest } = parsed.data;
-  res.status(201).json(await prisma.customer.create({ data: { ...rest, countries: countries.join(',') } }));
+  const data = { ...rest, countries: countries.join(',') };
+  const customer = await prisma.customer.create({ data });
+  await recordAuditLog({
+    entityType: 'Customer',
+    entityId: customer.id,
+    entityLabel: customer.name,
+    action: 'CREATE',
+    before: null,
+    after: data,
+    changedById: req.user!.userId,
+  });
+  res.status(201).json(customer);
 });
 
 customersRouter.put('/:id', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
   const parsed = schema.partial().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { countries, ...rest } = parsed.data;
-  res.json(
-    await prisma.customer.update({
-      where: { id: Number(req.params.id) },
-      data: { ...rest, ...(countries ? { countries: countries.join(',') } : {}) },
-    }),
-  );
+
+  const id = Number(req.params.id);
+  const before = await prisma.customer.findUnique({ where: { id } });
+  if (!before) return res.status(404).json({ error: 'Not found' });
+
+  const data = { ...rest, ...(countries ? { countries: countries.join(',') } : {}) };
+  const customer = await prisma.customer.update({ where: { id }, data });
+  await recordAuditLog({
+    entityType: 'Customer',
+    entityId: customer.id,
+    entityLabel: customer.name,
+    action: 'UPDATE',
+    before,
+    after: data,
+    changedById: req.user!.userId,
+  });
+  res.json(customer);
 });

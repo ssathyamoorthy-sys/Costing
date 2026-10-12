@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 
@@ -42,6 +43,25 @@ quoteTemplateGroupsRouter.get('/:id', async (req, res) => {
   });
   if (!group) return res.status(404).json({ error: 'Not found' });
   res.json({ id: group.id, name: group.name, templates: group.members.map((m) => m.template) });
+});
+
+const renameSchema = z.object({ name: z.string().min(1) });
+
+quoteTemplateGroupsRouter.put('/:id', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const parsed = renameSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const id = Number(req.params.id);
+  const existing = await prisma.quoteTemplateGroup.findUnique({ where: { id } });
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+
+  const nameTaken = await prisma.quoteTemplateGroup.findFirst({
+    where: { customerId: existing.customerId, name: parsed.data.name, id: { not: id } },
+  });
+  if (nameTaken) return res.status(409).json({ error: `A recipe named "${parsed.data.name}" already exists for this customer` });
+
+  const group = await prisma.quoteTemplateGroup.update({ where: { id }, data: { name: parsed.data.name } });
+  res.json(group);
 });
 
 // Member templates only exist to serve this group (auto-created by save-as-template-group),

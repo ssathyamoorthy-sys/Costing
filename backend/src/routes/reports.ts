@@ -450,3 +450,29 @@ reportsRouter.get('/current-pricing-by-customer', async (req, res) => {
   }
   res.json(Array.from(latest.values()).sort((a, b) => a.customerName.localeCompare(b.customerName) || a.productLabel.localeCompare(b.productLabel)));
 });
+
+// --- 14. Master data change log ---
+const AUDIT_ENTITY_TYPES = ['Product', 'Customer', 'ProcessingCharge', 'HsnCode', 'ExchangeRate', 'GeneralSetting'];
+
+reportsRouter.get('/change-log', async (req, res) => {
+  const { entityType, from, to } = req.query as Record<string, string | undefined>;
+  if (!entityType || !AUDIT_ENTITY_TYPES.includes(entityType)) {
+    return res.status(400).json({ error: `entityType must be one of ${AUDIT_ENTITY_TYPES.join(', ')}` });
+  }
+  const logs = await prisma.auditLog.findMany({
+    where: { entityType, createdAt: dateRangeWhere(from, to) },
+    include: { changedBy: { select: { name: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json(
+    logs.map((l) => ({
+      id: l.id,
+      entityId: l.entityId,
+      entityLabel: l.entityLabel,
+      action: l.action,
+      changes: JSON.parse(l.changesJson) as { field: string; oldValue: unknown; newValue: unknown }[],
+      changedBy: l.changedBy.name,
+      createdAt: l.createdAt,
+    })),
+  );
+});

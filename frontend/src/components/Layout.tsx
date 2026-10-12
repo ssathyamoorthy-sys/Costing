@@ -7,6 +7,7 @@ import type { Notification, Role } from '../types';
 const NAV: { to: string; label: string; roles: Role[] }[] = [
   { to: '/', label: 'Dashboard', roles: ['ADMIN', 'SUPERVISOR', 'PURCHASE', 'MERCHANDISER'] },
   { to: '/quotes', label: 'Quotes', roles: ['ADMIN', 'SUPERVISOR', 'MERCHANDISER'] },
+  { to: '/templates', label: 'Quote Templates', roles: ['ADMIN', 'SUPERVISOR', 'MERCHANDISER'] },
   { to: '/raw-materials', label: 'Raw Material Master', roles: ['ADMIN', 'SUPERVISOR', 'PURCHASE'] },
   { to: '/products', label: 'Product Master', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/customers', label: 'Customer Master', roles: ['ADMIN', 'SUPERVISOR'] },

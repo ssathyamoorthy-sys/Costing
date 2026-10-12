@@ -897,6 +897,32 @@ type LineWithSegmentsForTemplate = {
   }[];
 };
 
+function segmentsCreateInputForTemplate(line: LineWithSegmentsForTemplate) {
+  return line.segments.map((seg, i) => ({
+    productId: seg.productId,
+    sortOrder: i,
+    yarnComponents: {
+      create: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg })),
+    },
+    items: {
+      create: seg.items.map((item) => ({
+        itemTypeId: item.itemTypeId,
+        lengthCm: item.lengthCm,
+        widthCm: item.widthCm,
+        fabricConsumptionSqm: item.fabricConsumptionSqm,
+        gsm: item.gsm,
+        qtyPerSet: item.qtyPerSet,
+        accessoryOverrides: item.accessoryOverrides.length
+          ? { create: item.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })) }
+          : undefined,
+        packagingCharges: item.packagingCharges.length
+          ? { create: item.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })) }
+          : undefined,
+      })),
+    },
+  }));
+}
+
 async function createTemplateFromLine(line: LineWithSegmentsForTemplate, customerId: number, name: string, createdById: number) {
   return prisma.quoteTemplate.create({
     data: {
@@ -905,31 +931,22 @@ async function createTemplateFromLine(line: LineWithSegmentsForTemplate, custome
       color: line.color,
       qtySets: line.qtySets,
       createdById,
-      segments: {
-        create: line.segments.map((seg, i) => ({
-          productId: seg.productId,
-          sortOrder: i,
-          yarnComponents: {
-            create: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg })),
-          },
-          items: {
-            create: seg.items.map((item) => ({
-              itemTypeId: item.itemTypeId,
-              lengthCm: item.lengthCm,
-              widthCm: item.widthCm,
-              fabricConsumptionSqm: item.fabricConsumptionSqm,
-              gsm: item.gsm,
-              qtyPerSet: item.qtyPerSet,
-              accessoryOverrides: item.accessoryOverrides.length
-                ? { create: item.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })) }
-                : undefined,
-              packagingCharges: item.packagingCharges.length
-                ? { create: item.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })) }
-                : undefined,
-            })),
-          },
-        })),
-      },
+      segments: { create: segmentsCreateInputForTemplate(line) },
+    },
+  });
+}
+
+// Replaces an existing template's whole recipe in place (same id, so it keeps showing up in
+// the same spot in "Load from template") - this is how a template's content gets "edited":
+// build the line correctly in a live quote, then overwrite the saved template with it.
+async function overwriteTemplateFromLine(templateId: number, line: LineWithSegmentsForTemplate) {
+  await prisma.quoteTemplateSegment.deleteMany({ where: { templateId } });
+  return prisma.quoteTemplate.update({
+    where: { id: templateId },
+    data: {
+      color: line.color,
+      qtySets: line.qtySets,
+      segments: { create: segmentsCreateInputForTemplate(line) },
     },
   });
 }
@@ -937,6 +954,7 @@ async function createTemplateFromLine(line: LineWithSegmentsForTemplate, custome
 quotesRouter.post('/:id/lines/:lineId/save-as-template', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
   const parsed = saveAsTemplateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const overwrite = req.body?.overwrite === true;
 
   const lineId = Number(req.params.lineId);
   const line = await prisma.quoteLine.findUnique({
@@ -955,11 +973,18 @@ quotesRouter.post('/:id/lines/:lineId/save-as-template', requireRole('MERCHANDIS
   if (!line || line.quoteId !== Number(req.params.id)) return res.status(404).json({ error: 'Line not found' });
 
   const existing = await prisma.quoteTemplate.findFirst({ where: { customerId: line.quote.customerId, name: parsed.data.name } });
-  if (existing) return res.status(409).json({ error: `A template named "${parsed.data.name}" already exists for this customer` });
+  if (existing && !overwrite) {
+    return res.status(409).json({
+      error: `A template named "${parsed.data.name}" already exists for this customer`,
+      existingTemplateId: existing.id,
+    });
+  }
 
-  const template = await createTemplateFromLine(line, line.quote.customerId, parsed.data.name, req.user!.userId);
+  const template = existing
+    ? await overwriteTemplateFromLine(existing.id, line)
+    : await createTemplateFromLine(line, line.quote.customerId, parsed.data.name, req.user!.userId);
 
-  res.status(201).json(template);
+  res.status(existing ? 200 : 201).json(template);
 });
 
 // Saves every current line in this quote as a named, reusable group of templates (one
@@ -991,8 +1016,39 @@ quotesRouter.post('/:id/save-as-template-group', requireRole('MERCHANDISER', 'SU
   if (!quote) return res.status(404).json({ error: 'Not found' });
   if (quote.lines.length === 0) return res.status(400).json({ error: 'This quote has no sets to save yet' });
 
-  const existingGroup = await prisma.quoteTemplateGroup.findFirst({ where: { customerId: quote.customerId, name: parsed.data.name } });
-  if (existingGroup) return res.status(409).json({ error: `A template group named "${parsed.data.name}" already exists for this customer` });
+  const overwrite = req.body?.overwrite === true;
+  const existingGroup = await prisma.quoteTemplateGroup.findFirst({
+    where: { customerId: quote.customerId, name: parsed.data.name },
+    include: { members: { orderBy: { sortOrder: 'asc' } } },
+  });
+  if (existingGroup && !overwrite) {
+    return res.status(409).json({
+      error: `A recipe named "${parsed.data.name}" already exists for this customer`,
+      existingGroupId: existingGroup.id,
+    });
+  }
+
+  if (existingGroup) {
+    // Overwrite in place: update each existing member template's recipe from the
+    // corresponding (same-position) current quote line, add new member templates if this
+    // quote now has more sets than the saved group did, and drop any extra old ones if it
+    // has fewer - so the group always ends up matching exactly what's in the quote now.
+    for (let i = 0; i < quote.lines.length; i++) {
+      const member = existingGroup.members[i];
+      if (member) {
+        await overwriteTemplateFromLine(member.templateId, quote.lines[i]);
+      } else {
+        const template = await createTemplateFromLine(quote.lines[i], quote.customerId, `${parsed.data.name} - Set ${i + 1}`, req.user!.userId);
+        await prisma.quoteTemplateGroupMember.create({ data: { groupId: existingGroup.id, templateId: template.id, sortOrder: i } });
+      }
+    }
+    if (existingGroup.members.length > quote.lines.length) {
+      const extra = existingGroup.members.slice(quote.lines.length);
+      await prisma.quoteTemplate.deleteMany({ where: { id: { in: extra.map((m) => m.templateId) } } });
+    }
+    const group = await prisma.quoteTemplateGroup.findUniqueOrThrow({ where: { id: existingGroup.id } });
+    return res.status(200).json(group);
+  }
 
   const memberTemplates = [];
   for (let i = 0; i < quote.lines.length; i++) {

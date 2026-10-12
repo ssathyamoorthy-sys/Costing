@@ -17,6 +17,7 @@ import { GeneralSettingsPage } from './pages/GeneralSettingsPage';
 import { UsersPage } from './pages/UsersPage';
 import { QuotesListPage } from './pages/QuotesListPage';
 import { QuoteDetailPage } from './pages/QuoteDetailPage';
+import { TemplatesPage } from './pages/TemplatesPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/quotes" element={<QuotesListPage />} />
         <Route path="/quotes/:id" element={<QuoteDetailPage />} />
+        <Route path="/templates" element={<TemplatesPage />} />
         <Route path="/raw-materials" element={<RawMaterialsPage />} />
         <Route path="/products" element={<ProductsPage />} />
         <Route path="/products/new" element={<ProductEditPage />} />

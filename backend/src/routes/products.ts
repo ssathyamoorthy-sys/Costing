@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { validateMixing } from '../costing/engine';
 import { buildWorkbook, parseWorkbookSheet } from '../xlsx/helpers';
+import { recordAuditLog } from '../lib/auditLog';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -235,6 +236,15 @@ productsRouter.post('/', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) =>
     },
     include: { yarnComponents: true },
   });
+  await recordAuditLog({
+    entityType: 'Product',
+    entityId: product.id,
+    entityLabel: product.code,
+    action: 'CREATE',
+    before: null,
+    after: productData,
+    changedById: req.user!.userId,
+  });
   res.status(201).json(product);
 });
 
@@ -244,6 +254,9 @@ productsRouter.put('/:id', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) 
 
   const id = Number(req.params.id);
   const { force, yarnComponents, ...productData } = parsed.data;
+
+  const before = await prisma.product.findUnique({ where: { id } });
+  if (!before) return res.status(404).json({ error: 'Not found' });
 
   if (yarnComponents) {
     const mixing = validateMixing(yarnComponents);
@@ -263,6 +276,15 @@ productsRouter.put('/:id', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) 
       ...(yarnComponents ? { yarnComponents: { create: yarnComponents } } : {}),
     },
     include: { yarnComponents: true },
+  });
+  await recordAuditLog({
+    entityType: 'Product',
+    entityId: product.id,
+    entityLabel: product.code,
+    action: 'UPDATE',
+    before,
+    after: productData,
+    changedById: req.user!.userId,
   });
   res.json(product);
 });

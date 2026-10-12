@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
+import { recordAuditLog } from '../lib/auditLog';
 
 export const hsnCodesRouter = Router();
 hsnCodesRouter.use(requireAuth);
@@ -22,11 +23,36 @@ const schema = z.object({
 hsnCodesRouter.post('/', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  res.status(201).json(await prisma.hsnCode.create({ data: parsed.data }));
+  const hsn = await prisma.hsnCode.create({ data: parsed.data });
+  await recordAuditLog({
+    entityType: 'HsnCode',
+    entityId: hsn.id,
+    entityLabel: `${hsn.hsCode} - ${hsn.description}`,
+    action: 'CREATE',
+    before: null,
+    after: parsed.data,
+    changedById: req.user!.userId,
+  });
+  res.status(201).json(hsn);
 });
 
 hsnCodesRouter.put('/:id', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
   const parsed = schema.partial().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  res.json(await prisma.hsnCode.update({ where: { id: Number(req.params.id) }, data: parsed.data }));
+
+  const id = Number(req.params.id);
+  const before = await prisma.hsnCode.findUnique({ where: { id } });
+  if (!before) return res.status(404).json({ error: 'Not found' });
+
+  const hsn = await prisma.hsnCode.update({ where: { id }, data: parsed.data });
+  await recordAuditLog({
+    entityType: 'HsnCode',
+    entityId: hsn.id,
+    entityLabel: `${hsn.hsCode} - ${hsn.description}`,
+    action: 'UPDATE',
+    before,
+    after: parsed.data,
+    changedById: req.user!.userId,
+  });
+  res.json(hsn);
 });

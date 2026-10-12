@@ -35,6 +35,7 @@ model User {
   notifications      Notification[]
   quoteTemplates     QuoteTemplate[]
   quoteTemplateGroups QuoteTemplateGroup[]
+  auditLogs          AuditLog[]
 }
 
 model RawMaterial {
@@ -553,4 +554,23 @@ model Notification {
   read      Boolean  @default(false)
   emailSent Boolean  @default(false)
   createdAt DateTime @default(now())
+}
+
+// Generic change log for the masters (Product, Customer, ProcessingCharge, HsnCode,
+// ExchangeRate, GeneralSetting) - who changed what field, from what to what, and when.
+// entityLabel is captured at write time (the code/name/key at that moment) so the log
+// still reads sensibly even if the entity is later renamed.
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  entityType  String
+  entityId    Int
+  entityLabel String
+  action      String   // "CREATE" | "UPDATE"
+  changesJson String   // JSON array of { field, oldValue, newValue }
+  changedById Int
+  changedBy   User     @relation(fields: [changedById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([entityType, createdAt])
 }

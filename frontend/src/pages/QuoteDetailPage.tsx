@@ -294,6 +294,20 @@ export function QuoteDetailPage() {
       setTemplates(list);
       alert(`Saved as template "${name}". It'll show up under "Load from template" next time you quote this customer.`);
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.body?.existingTemplateId) {
+        const overwrite = confirm(`${e.body.error}. Overwrite it with this set's current recipe?`);
+        if (overwrite) {
+          try {
+            await api.post(`/quotes/${quote!.id}/lines/${lineId}/save-as-template`, { name, overwrite: true });
+            const list = await api.get<QuoteTemplateSummary[]>(`/quote-templates?customerId=${quote!.customerId}`);
+            setTemplates(list);
+            alert(`Updated template "${name}" with this set's current recipe.`);
+          } catch (e2) {
+            setError(e2 instanceof ApiError ? e2.message : String(e2));
+          }
+        }
+        return;
+      }
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }
@@ -307,6 +321,20 @@ export function QuoteDetailPage() {
       setTemplateGroups(list);
       alert(`Saved as recipe "${name}" (${quote!.lines.length} set(s)). It'll show up under "Apply saved recipe" next time you quote this customer.`);
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.body?.existingGroupId) {
+        const overwrite = confirm(`${e.body.error}. Overwrite it with this quote's current sets?`);
+        if (overwrite) {
+          try {
+            await api.post(`/quotes/${quote!.id}/save-as-template-group`, { name, overwrite: true });
+            const list = await api.get<QuoteTemplateGroupSummary[]>(`/quote-template-groups?customerId=${quote!.customerId}`);
+            setTemplateGroups(list);
+            alert(`Updated recipe "${name}" with this quote's current ${quote!.lines.length} set(s).`);
+          } catch (e2) {
+            setError(e2 instanceof ApiError ? e2.message : String(e2));
+          }
+        }
+        return;
+      }
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }
@@ -1164,6 +1192,12 @@ export function QuoteDetailPage() {
         const singleItem = isSingle ? singleSeg!.items[0] : null;
         const singleLabel = singleSeg?.product?.name || singleSeg?.product?.code || '';
         const showDetailsButton = !isSingle || isSupervisor;
+        // item.qtyKg is "one set's worth" (pieceWeight x qtyPerSet / 1000) - multiplying by
+        // qtySets gives the total weight for the full order quantity.
+        const lineTotalKg = line.segments.reduce(
+          (sum, seg) => sum + seg.items.reduce((s, it) => s + (it.qtyKg ?? 0), 0),
+          0,
+        ) * line.qtySets;
 
         function segmentDetail(seg: (typeof line.segments)[number]) {
           const segLabel = seg.product?.name || seg.product?.code || `Product ${seg.productId}`;
@@ -1183,12 +1217,14 @@ export function QuoteDetailPage() {
                       <th>Size (cm)</th>
                       <th className="right">GSM</th>
                       <th className="right">Qty/Set</th>
+                      <th className="right">Qty in Kg</th>
                       <th className="right">Rate/Pc</th>
                     </tr>
                   </thead>
                   <tbody>
                     {seg.items.map((item) => {
                       const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
+                      const totalKg = item.qtyKg != null ? item.qtyKg * line.qtySets : null;
                       return (
                         <Fragment key={item.id}>
                           <tr>
@@ -1196,11 +1232,12 @@ export function QuoteDetailPage() {
                             <td>{sizeLabel(item)}</td>
                             <td className="right mono">{item.gsm}</td>
                             <td className="right mono">{item.qtyPerSet}</td>
+                            <td className="right mono">{totalKg != null ? totalKg.toFixed(2) : '-'}</td>
                             <td className="right mono">{b?.ratePerPiece?.[currency] != null ? `${symbol}${b.ratePerPiece[currency].toFixed(4)}` : '-'}</td>
                           </tr>
                           {item.packagingCharges.length > 0 && (
                             <tr>
-                              <td colSpan={5} className="muted" style={{ fontSize: 12 }}>
+                              <td colSpan={6} className="muted" style={{ fontSize: 12 }}>
                                 + Packaging: {item.packagingCharges.map((p) => `${p.description} (₹${p.ratePerPiece}/pc)`).join(', ')}
                               </td>
                             </tr>
@@ -1364,7 +1401,7 @@ export function QuoteDetailPage() {
                     {' '}
                     - {singleSeg!.product?.code}
                     {singleLabel ? ` (${singleLabel})` : ''} - {singleItem!.itemType?.name} - {line.color} - {sizeLabel(singleItem!)}, GSM{' '}
-                    {singleItem!.gsm} - Qty {line.qtySets.toLocaleString()} pcs
+                    {singleItem!.gsm} - Qty {line.qtySets.toLocaleString()} pcs ({lineTotalKg.toFixed(2)} kg)
                   </>
                 ) : (
                   <>
@@ -1414,7 +1451,10 @@ export function QuoteDetailPage() {
                   <td className="right mono">{ratePerSet != null ? `${symbol}${ratePerSet.toFixed(4)}` : '-'}</td>
                 </tr>
                 <tr>
-                  <td>Total for {line.qtySets.toLocaleString()} {isSingle ? 'pcs' : 'set(s)'}</td>
+                  <td>
+                    Total for {line.qtySets.toLocaleString()} {isSingle ? 'pcs' : 'set(s)'}
+                    <span className="muted"> ({lineTotalKg.toFixed(2)} kg)</span>
+                  </td>
                   <td className="right mono">{ratePerSet != null ? `${symbol}${(ratePerSet * line.qtySets).toFixed(2)}` : '-'}</td>
                 </tr>
               </tbody>
