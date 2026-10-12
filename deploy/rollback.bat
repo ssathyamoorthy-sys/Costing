@@ -55,18 +55,25 @@ git reset --hard %PREV_COMMIT%
 if errorlevel 1 goto :error
 
 echo.
-echo [2/5] Reinstalling backend dependencies for that version...
+echo [2/6] Reinstalling backend dependencies for that version...
 cd backend
 call npm install
 if errorlevel 1 goto :error
 
 echo.
-echo [3/5] Rebuilding backend...
+echo [3/6] Regenerating Prisma Client for that version's schema...
+REM Needed even going backward - npm's allowScripts gate blocks the postinstall
+REM hook that would otherwise do this automatically (see redeploy.bat).
+call npx prisma generate
+if errorlevel 1 goto :error
+
+echo.
+echo [4/6] Rebuilding backend...
 call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [4/5] Reinstalling and rebuilding frontend...
+echo [5/6] Reinstalling and rebuilding frontend...
 cd ..\frontend
 call npm install
 if errorlevel 1 goto :error
@@ -74,7 +81,7 @@ call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [5/5] Restarting the service...
+echo [6/6] Restarting the service...
 cd /d "%APP_DIR%"
 "%NSSM_PATH%" restart %SERVICE_NAME%
 if errorlevel 1 (

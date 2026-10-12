@@ -58,25 +58,34 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/7] Installing backend dependencies...
+echo [3/8] Installing backend dependencies...
 cd backend
 call npm install
 if errorlevel 1 goto :error
 
 echo.
-echo [4/7] Building backend...
+echo [4/8] Regenerating Prisma Client from the current schema...
+REM npm's allowScripts security gate blocks @prisma/client's postinstall hook (which
+REM normally runs this automatically) by default, so the generated TypeScript types
+REM silently go stale after a schema change and the build below fails with "property
+REM does not exist" errors. Running it explicitly here never depends on that hook.
+call npx prisma generate
+if errorlevel 1 goto :error
+
+echo.
+echo [5/8] Building backend...
 call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [5/7] Applying database migrations (safe to run even if there are none -
+echo [6/8] Applying database migrations (safe to run even if there are none -
 echo       every migration in this project only ADDS fields, never removes
 echo       or changes existing ones, so your existing data is never touched)...
 call npx prisma migrate deploy
 if errorlevel 1 goto :error
 
 echo.
-echo [6/7] Installing and building frontend...
+echo [7/8] Installing and building frontend...
 cd ..\frontend
 call npm install
 if errorlevel 1 goto :error
@@ -84,7 +93,7 @@ call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [7/7] Restarting the service...
+echo [8/8] Restarting the service...
 cd /d "%APP_DIR%"
 "%NSSM_PATH%" restart %SERVICE_NAME%
 if errorlevel 1 (
