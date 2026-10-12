@@ -15,10 +15,6 @@ setlocal enabledelayedexpansion
 
 for %%I in ("%~dp0..") do set "APP_DIR=%%~fI"
 
-REM If nssm.exe isn't on the system PATH, change this to its full path,
-REM e.g. C:\nssm\win64\nssm.exe
-set NSSM_PATH=nssm
-
 set SERVICE_NAME=TerryTowelCosting
 
 echo ===================================================
@@ -51,10 +47,12 @@ if /i not "%CONFIRM%"=="y" (
 
 echo.
 echo [1/7] Stopping the service (so the rebuild can replace files it has open)...
-"%NSSM_PATH%" stop %SERVICE_NAME%
-REM Best-effort: catch anything else still holding the old build's files open
-REM (safe on a single-purpose server dedicated to running only this app).
-taskkill /F /IM node.exe /T >nul 2>&1
+REM Using "net stop" (built into every Windows install, no PATH dependency on
+REM nssm.exe) rather than "nssm stop" - and specifically NOT taskkill, which
+REM would bypass NSSM's own stop handling and look like a crash, triggering its
+REM automatic restart and immediately re-locking the very files we're about to
+REM rebuild.
+net stop %SERVICE_NAME%
 REM A few seconds for Windows to fully release file handles (the Prisma query engine
 REM .dll in particular) after the process exits.
 timeout /t 5 /nobreak >nul
@@ -103,10 +101,10 @@ if errorlevel 1 goto :error
 echo.
 echo [7/7] Starting the service...
 cd /d "%APP_DIR%"
-"%NSSM_PATH%" start %SERVICE_NAME%
+net start %SERVICE_NAME%
 if errorlevel 1 (
     echo WARNING: could not start the service automatically.
-    echo Start it manually with: %NSSM_PATH% start %SERVICE_NAME%
+    echo Start it manually with: net start %SERVICE_NAME%
 )
 
 echo.
@@ -129,7 +127,7 @@ echo  started back up - the app is offline right now.
 echo  Check the error, fix it if you can, and try
 echo  deploy\rollback.bat again - or start the service
 echo  manually once you're confident what's on disk works:
-echo  %NSSM_PATH% start %SERVICE_NAME%
+echo  net start %SERVICE_NAME%
 echo ===================================================
 pause
 exit /b 1

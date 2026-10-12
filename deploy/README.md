@@ -66,9 +66,11 @@ to run on the office network only — not exposed to the public internet.
    nssm start TerryTowelCosting
    ```
    If `nssm` isn't on the system PATH, use its full path instead (e.g.
-   `C:\nssm\win64\nssm.exe install TerryTowelCosting`) - and edit the
-   `NSSM_PATH` line near the top of both `redeploy.bat` and `rollback.bat`
-   to match, so they can find it too.
+   `C:\nssm\win64\nssm.exe install TerryTowelCosting`) for this one-time setup.
+   `redeploy.bat` and `rollback.bat` don't need `nssm.exe` at all day to day -
+   they stop and start the service with Windows' own built-in `net stop`/
+   `net start`, which work on any registered service by name regardless of
+   whether `nssm.exe` itself is reachable from a given terminal.
 
 7. **Open the firewall to the office network only:**
    Add a Windows Firewall inbound rule for TCP port 4000, scoped to the
@@ -93,10 +95,12 @@ migrations, and restarts the service.
   server. Every schema migration in this project is additive (adds new
   optional fields) and never removes or changes existing ones, so older
   data always keeps working after an update.
-- If any step fails partway (a build error, a bad migration), the script
-  stops immediately and does **not** restart the service - the previous
-  working version keeps running untouched. Nothing live breaks from a
-  failed update attempt.
+- The service is stopped near the start (so the rebuild can replace files
+  it has open) and only started again once every step has succeeded - so
+  the app is briefly offline during an update, start to finish. If any
+  step fails partway, the script stops immediately **without** restarting
+  the service, and tells you to run `deploy\rollback.bat` rather than
+  leaving you to guess whether what's on disk right now actually works.
 - Before pulling anything, it automatically records the exact version that
   was running, so it can be undone (see below).
 
@@ -121,9 +125,10 @@ machine. If you need to go back further, say so and I'll walk through it.
 
 ## Troubleshooting
 
-- **Service won't start:** check `nssm status TerryTowelCosting`, and look
-  for errors by running `node dist\server.js` directly from the `backend`
-  folder in a terminal to see the actual error.
+- **Service won't start:** check `sc query TerryTowelCosting` (built in, no
+  PATH dependency on `nssm.exe`), and look for errors by running
+  `node dist\server.js` directly from the `backend` folder in a terminal to
+  see the actual error.
 - **Nobody else on the network can reach it:** confirm the firewall rule
   from step 7, and that they're using this server's actual hostname/IP,
   not `localhost`.
