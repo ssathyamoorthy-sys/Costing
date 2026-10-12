@@ -127,8 +127,9 @@ machine. If you need to go back further, say so and I'll walk through it.
 - **Nobody else on the network can reach it:** confirm the firewall rule
   from step 7, and that they're using this server's actual hostname/IP,
   not `localhost`.
-- **`git pull` fails with "local changes would be overwritten":** something
-  modified a file directly on the server (most commonly `package-lock.json`
-  after an `npm install`). Run `git status` to see what changed, then
-  `git checkout -- <path>` to discard it if it's safe to lose (lock files
-  usually are), before retrying `git pull`.
+- **`git pull` fails with "local changes would be overwritten":** `redeploy.bat`
+  already auto-discards local `package-lock.json` drift before pulling (the
+  most common cause - npm regenerates it slightly on every install). If it's
+  some other file, run `git status` to see what changed, then
+  `git checkout -- <path>` to discard it if it's safe to lose, before
+  retrying `git pull`.

@@ -44,6 +44,12 @@ echo (run deploy\rollback.bat to return to this exact version if something break
 
 echo.
 echo [2/7] Pulling latest code from GitHub...
+REM npm regenerates package-lock.json slightly on every install (platform-specific
+REM optional-dependency resolution), which leaves it locally modified and blocks a
+REM clean pull with "local changes would be overwritten." It's just a lockfile -
+REM the next npm install step regenerates it anyway - so it's always safe to discard
+REM any local drift here before pulling.
+git checkout -- backend\package-lock.json frontend\package-lock.json 2>nul
 git pull origin master
 if errorlevel 1 (
     echo ERROR: git pull failed - see message above. Nothing else was run.
