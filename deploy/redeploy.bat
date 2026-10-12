@@ -30,7 +30,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [1/7] Recording current version for rollback...
+echo [1/9] Recording current version for rollback...
 if not exist deploy mkdir deploy
 git rev-parse HEAD > deploy\.previous-commit.txt
 if errorlevel 1 (
@@ -43,7 +43,15 @@ echo Current version saved as rollback point: %PREV_COMMIT%
 echo (run deploy\rollback.bat to return to this exact version if something breaks)
 
 echo.
-echo [2/7] Pulling latest code from GitHub...
+echo [2/9] Stopping the service (so the rebuild can replace files it has open)...
+"%NSSM_PATH%" stop %SERVICE_NAME%
+REM A few seconds for Windows to fully release file handles (the Prisma query engine
+REM .dll in particular) after the process exits - without this, a rebuild started
+REM immediately can still hit "EPERM: operation not permitted" trying to replace it.
+timeout /t 5 /nobreak >nul
+
+echo.
+echo [3/9] Pulling latest code from GitHub...
 REM npm regenerates package-lock.json slightly on every install (platform-specific
 REM optional-dependency resolution), which leaves it locally modified and blocks a
 REM clean pull with "local changes would be overwritten." It's just a lockfile -
@@ -52,40 +60,41 @@ REM any local drift here before pulling.
 git checkout -- backend\package-lock.json frontend\package-lock.json 2>nul
 git pull origin master
 if errorlevel 1 (
-    echo ERROR: git pull failed - see message above. Nothing else was run.
-    pause
-    exit /b 1
+    echo ERROR: git pull failed - see message above.
+    goto :error
 )
 
 echo.
-echo [3/8] Installing backend dependencies...
+echo [4/9] Installing backend dependencies...
 cd backend
 call npm install
 if errorlevel 1 goto :error
 
 echo.
-echo [4/8] Regenerating Prisma Client from the current schema...
+echo [5/9] Regenerating Prisma Client from the current schema...
 REM npm's allowScripts security gate blocks @prisma/client's postinstall hook (which
 REM normally runs this automatically) by default, so the generated TypeScript types
 REM silently go stale after a schema change and the build below fails with "property
 REM does not exist" errors. Running it explicitly here never depends on that hook.
+REM (The service was already stopped in step 2, so the engine .dll it would
+REM otherwise overwrite isn't locked by a running process.)
 call npx prisma generate
 if errorlevel 1 goto :error
 
 echo.
-echo [5/8] Building backend...
+echo [6/9] Building backend...
 call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [6/8] Applying database migrations (safe to run even if there are none -
+echo [7/9] Applying database migrations (safe to run even if there are none -
 echo       every migration in this project only ADDS fields, never removes
 echo       or changes existing ones, so your existing data is never touched)...
 call npx prisma migrate deploy
 if errorlevel 1 goto :error
 
 echo.
-echo [7/8] Installing and building frontend...
+echo [8/9] Installing and building frontend...
 cd ..\frontend
 call npm install
 if errorlevel 1 goto :error
@@ -93,12 +102,12 @@ call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [8/8] Restarting the service...
+echo [9/9] Starting the service...
 cd /d "%APP_DIR%"
-"%NSSM_PATH%" restart %SERVICE_NAME%
+"%NSSM_PATH%" start %SERVICE_NAME%
 if errorlevel 1 (
-    echo WARNING: could not restart the service automatically.
-    echo Restart it manually with: %NSSM_PATH% restart %SERVICE_NAME%
+    echo WARNING: could not start the service automatically.
+    echo Start it manually with: %NSSM_PATH% start %SERVICE_NAME%
 )
 
 echo.
@@ -115,9 +124,11 @@ exit /b 0
 echo.
 echo ===================================================
 echo  Redeploy FAILED - see the error above.
-echo  The service was NOT restarted, so the previous
-echo  working version is still running normally.
-echo  No rollback needed - nothing live was changed.
+echo  The service was stopped in step 2 (to free up files
+echo  for the rebuild) and has NOT been started back up -
+echo  the app is offline right now.
+echo  Run deploy\rollback.bat to restore the last working
+echo  version and bring it back online.
 echo ===================================================
 pause
 exit /b 1

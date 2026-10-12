@@ -50,30 +50,38 @@ if /i not "%CONFIRM%"=="y" (
 )
 
 echo.
-echo [1/5] Reverting code to the previous version...
+echo [1/7] Stopping the service (so the rebuild can replace files it has open)...
+"%NSSM_PATH%" stop %SERVICE_NAME%
+REM A few seconds for Windows to fully release file handles (the Prisma query engine
+REM .dll in particular) after the process exits.
+timeout /t 5 /nobreak >nul
+
+echo.
+echo [2/7] Reverting code to the previous version...
 git reset --hard %PREV_COMMIT%
 if errorlevel 1 goto :error
 
 echo.
-echo [2/6] Reinstalling backend dependencies for that version...
+echo [3/7] Reinstalling backend dependencies for that version...
 cd backend
 call npm install
 if errorlevel 1 goto :error
 
 echo.
-echo [3/6] Regenerating Prisma Client for that version's schema...
+echo [4/7] Regenerating Prisma Client for that version's schema...
 REM Needed even going backward - npm's allowScripts gate blocks the postinstall
-REM hook that would otherwise do this automatically (see redeploy.bat).
+REM hook that would otherwise do this automatically (see redeploy.bat). The
+REM service is already stopped (step 1), so the engine .dll isn't locked.
 call npx prisma generate
 if errorlevel 1 goto :error
 
 echo.
-echo [4/6] Rebuilding backend...
+echo [5/7] Rebuilding backend...
 call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [5/6] Reinstalling and rebuilding frontend...
+echo [6/7] Reinstalling and rebuilding frontend...
 cd ..\frontend
 call npm install
 if errorlevel 1 goto :error
@@ -81,17 +89,17 @@ call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [6/6] Restarting the service...
+echo [7/7] Starting the service...
 cd /d "%APP_DIR%"
-"%NSSM_PATH%" restart %SERVICE_NAME%
+"%NSSM_PATH%" start %SERVICE_NAME%
 if errorlevel 1 (
-    echo WARNING: could not restart the service automatically.
-    echo Restart it manually with: %NSSM_PATH% restart %SERVICE_NAME%
+    echo WARNING: could not start the service automatically.
+    echo Start it manually with: %NSSM_PATH% start %SERVICE_NAME%
 )
 
 echo.
 echo ===================================================
-echo  Rolled back to %PREV_COMMIT% and restarted.
+echo  Rolled back to %PREV_COMMIT% and started.
 echo  Check it loads at http://localhost:4000
 echo  Do NOT run redeploy.bat again until the issue with
 echo  the newer version has actually been fixed on GitHub -
@@ -104,9 +112,12 @@ exit /b 0
 echo.
 echo ===================================================
 echo  Rollback FAILED partway through - see the error above.
-echo  The service was NOT restarted. Do not assume either
-echo  version is fully working right now - check manually
-echo  before telling anyone the app is back up.
+echo  The service was stopped in step 1 and has NOT been
+echo  started back up - the app is offline right now.
+echo  Check the error, fix it if you can, and try
+echo  deploy\rollback.bat again - or start the service
+echo  manually once you're confident what's on disk works:
+echo  %NSSM_PATH% start %SERVICE_NAME%
 echo ===================================================
 pause
 exit /b 1
