@@ -249,6 +249,7 @@ export interface QuoteLine {
 export interface Quote {
   id: number;
   quoteNo: string;
+  customerEnquiryNo?: string | null;
   customerId: number;
   customer: Customer;
   status: QuoteStatus;

@@ -218,6 +218,9 @@ model ExchangeRate {
 model Quote {
   id            Int         @id @default(autoincrement())
   quoteNo       String      @unique
+  // The customer's own reference number for this enquiry (their RFQ/PO number, etc.) -
+  // free text, purely informational, never used in pricing.
+  customerEnquiryNo String?
   customerId    Int
   customer      Customer    @relation(fields: [customerId], references: [id])
   status        String      @default("DRAFT")

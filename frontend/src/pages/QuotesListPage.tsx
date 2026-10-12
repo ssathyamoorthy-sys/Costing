@@ -50,6 +50,7 @@ export function QuotesListPage() {
   const [showNew, setShowNew] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerId, setCustomerId] = useState<number | ''>('');
+  const [customerEnquiryNo, setCustomerEnquiryNo] = useState('');
 
   function load() {
     api.get<Quote[]>('/quotes').then(setQuotes).catch((e) => setError(e.message));
@@ -58,13 +59,14 @@ export function QuotesListPage() {
 
   function openNew() {
     api.get<Customer[]>('/customers').then(setCustomers);
+    setCustomerEnquiryNo('');
     setShowNew(true);
   }
 
   async function createQuote() {
     if (!customerId) return;
     try {
-      const q = await api.post<Quote>('/quotes', { customerId });
+      const q = await api.post<Quote>('/quotes', { customerId, customerEnquiryNo: customerEnquiryNo || undefined });
       navigate(`/quotes/${q.id}`);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -89,6 +91,7 @@ export function QuotesListPage() {
           <thead>
             <tr>
               <th>Quote No</th>
+              <th>Customer Enquiry No</th>
               <th>Customer</th>
               <th>Currency</th>
               <th>Status</th>
@@ -105,6 +108,7 @@ export function QuotesListPage() {
                     {q.quoteNo}
                   </Link>
                 </td>
+                <td className="muted">{q.customerEnquiryNo || '-'}</td>
                 <td>{q.customer?.name}</td>
                 <td className="muted">{q.currency}</td>
                 <td>
@@ -132,6 +136,14 @@ export function QuotesListPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label>Customer enquiry no. (optional)</label>
+              <input
+                value={customerEnquiryNo}
+                onChange={(e) => setCustomerEnquiryNo(e.target.value)}
+                placeholder="their RFQ / reference number"
+              />
             </div>
             {customerId && (
               <p className="muted" style={{ gridColumn: '1 / -1', margin: 0 }}>

@@ -25,7 +25,10 @@ async function main() {
     { name: 'Hand Towel', stitchingCostPerKg: 18, packingCostPerKg: 10 },
     { name: 'Bath Sheet', stitchingCostPerKg: 14, packingCostPerKg: 10 },
     { name: 'Face Towel', stitchingCostPerKg: 20, packingCostPerKg: 10 },
-    { name: 'Bathrobe', stitchingCostPerKg: 25, packingCostPerKg: 12 },
+    // Bathrobe is a garment (sized by fabric consumption, not L x W) - stitching is a flat
+    // per-piece labor cost, not a per-kg one. The stitchingCostPerPiece figure below is a
+    // placeholder; verify it against your own costing before quoting off it.
+    { name: 'Bathrobe', stitchingCostPerKg: 0, packingCostPerKg: 12, sizingMethod: 'FABRIC_CONSUMPTION', stitchingCostPerPiece: 80 },
   ];
   const itemTypes: Record<string, { id: number }> = {};
   for (const def of itemTypeDefs) {

@@ -249,7 +249,9 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
 
   const wb = buildWorkbook([{ name: 'Price List', columns, rows }]);
   const ws = wb.getWorksheet('Price List')!;
-  ws.spliceRows(1, 0, [`Quote ${quote.quoteNo} - ${quote.customer.name} - ${quote.createdAt.toDateString()}`]);
+  const titleParts = [`Quote ${quote.quoteNo}`, quote.customer.name, quote.createdAt.toDateString()];
+  if (quote.customerEnquiryNo) titleParts.splice(1, 0, `Enquiry No ${quote.customerEnquiryNo}`);
+  ws.spliceRows(1, 0, [titleParts.join(' - ')]);
   ws.spliceRows(2, 0, []);
   ws.getRow(1).font = { bold: true, size: 13 };
 
@@ -641,6 +643,7 @@ quotesRouter.delete('/:id', requireRole('SUPERVISOR', 'ADMIN'), async (req, res)
 const createQuoteSchema = z.object({
   customerId: z.number().int().positive(),
   validityDate: z.string().optional(),
+  customerEnquiryNo: z.string().optional(),
 });
 
 quotesRouter.post('/', requireRole('MERCHANDISER', 'ADMIN'), async (req, res) => {
@@ -655,6 +658,7 @@ quotesRouter.post('/', requireRole('MERCHANDISER', 'ADMIN'), async (req, res) =>
     data: {
       quoteNo,
       customerId: parsed.data.customerId,
+      customerEnquiryNo: parsed.data.customerEnquiryNo || undefined,
       createdById: req.user!.userId,
       // Domestic (India) customers are always billed in INR, enforced on the Customer record
       // itself (see customers.ts) - so this is simply the customer's currency, whatever it is.
@@ -665,6 +669,32 @@ quotesRouter.post('/', requireRole('MERCHANDISER', 'ADMIN'), async (req, res) =>
     },
   });
   res.status(201).json(quote);
+});
+
+// Owner (while still DRAFT) or Supervisor/Admin: edit purely informational quote metadata -
+// never touches pricing, so it's allowed even on a locked quote.
+const detailsSchema = z.object({
+  customerEnquiryNo: z.string().nullable().optional(),
+  validityDate: z.string().nullable().optional(),
+});
+
+quotesRouter.put('/:id/details', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const quoteId = Number(req.params.id);
+  const parsed = detailsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const isSupervisor = req.user!.role === 'SUPERVISOR' || req.user!.role === 'ADMIN';
+  const check = await assertEditableByOwner(quoteId, req.user!.userId, isSupervisor);
+  if (!check.ok) return res.status(check.status).json({ error: check.error });
+
+  const quote = await prisma.quote.update({
+    where: { id: quoteId },
+    data: {
+      customerEnquiryNo: parsed.data.customerEnquiryNo === undefined ? undefined : parsed.data.customerEnquiryNo || null,
+      validityDate: parsed.data.validityDate === undefined ? undefined : parsed.data.validityDate ? new Date(parsed.data.validityDate) : null,
+    },
+  });
+  res.json(quote);
 });
 
 const itemAccessoryOverrideSchema = z.object({ accessoryTypeId: z.number().int().positive(), costPerPiece: z.number().nonnegative() });

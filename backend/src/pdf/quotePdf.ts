@@ -8,6 +8,7 @@ const CURRENCY_SYMBOL: Record<string, string> = { INR: 'Rs.', USD: '$', GBP: 'GB
 
 interface QuoteForPdf {
   quoteNo: string;
+  customerEnquiryNo?: string | null;
   status: string;
   validityDate: Date | null;
   paymentTerms: string | null;
@@ -71,6 +72,7 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   doc.font('Helvetica').fontSize(9);
   doc.text(`Quote No: ${quote.quoteNo}`, 40, 112);
   doc.text(`Date: ${quote.createdAt.toLocaleDateString()}`, 40, 126);
+  if (quote.customerEnquiryNo) doc.text(`Customer Enquiry No: ${quote.customerEnquiryNo}`, 40, 140);
   doc.text(`Customer: ${quote.customer.name}`, 300, 112);
   doc.text(`Currency: ${currency}`, 300, 140);
   if (quote.validityDate) doc.text(`Valid until: ${quote.validityDate.toLocaleDateString()}`, 300, 126);

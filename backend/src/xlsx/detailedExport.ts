@@ -15,6 +15,7 @@ export interface ItemSheetAccessoryRow {
 }
 export interface ItemSheetContext {
   quoteNo: string;
+  customerEnquiryNo?: string | null;
   customerName: string;
   setNo: number;
   segmentLabel: string; // e.g. "PDD - Plain Dyed Dobby"
@@ -100,7 +101,16 @@ const SECTION_FONT = { bold: true, italic: true };
  * the sheet's two headline outputs (Rate/Kg and Rate/Piece in the quote's currency) for the
  * summary sheet to reference.
  */
-export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { rateKgCell: string; ratePieceCell: string } {
+export interface ItemSheetResult {
+  rateKgCell: string;
+  ratePieceCell: string;
+  gsmCell: string;
+  qtyPerSetCell: string;
+  qtyKgPerSetCell: string;
+  marginPctCell: string;
+}
+
+export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): ItemSheetResult {
   const isYarnDyed = ctx.colorMethod === 'YARN_DYED';
   const isGarment = ctx.itemClass === 'GARMENT';
 
@@ -142,6 +152,11 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   put(r, 3, 'Customer');
   put(r, 4, ctx.customerName);
   r += 1;
+  if (ctx.customerEnquiryNo) {
+    put(r, 1, 'Customer Enquiry No');
+    put(r, 2, ctx.customerEnquiryNo);
+    r += 1;
+  }
   put(r, 1, 'Color');
   put(r, 2, ctx.color);
   put(r, 3, 'Currency');
@@ -155,12 +170,13 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
 
   // --- Size & weight ---
   let pieceWeightCell: string;
+  let gsmCell: string;
   if (isGarment) {
     put(r, 1, 'Fabric consumption (sqm/pc)');
     const fabricCell = put(r, 2, ctx.fabricConsumptionSqm);
     r++;
     put(r, 1, 'GSM');
-    const gsmCell = put(r, 2, ctx.gsm);
+    gsmCell = put(r, 2, ctx.gsm);
     r++;
     put(r, 1, 'Piece Weight (g)');
     pieceWeightCell = put(r, 2, { formula: `${fabricCell}*${gsmCell}` } as any);
@@ -173,7 +189,7 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
     const widthCell = put(r, 2, ctx.widthCm);
     r++;
     put(r, 1, 'GSM');
-    const gsmCell = put(r, 2, ctx.gsm);
+    gsmCell = put(r, 2, ctx.gsm);
     r++;
     put(r, 1, 'Piece Weight (g)');
     pieceWeightCell = put(r, 2, { formula: `${lengthCell}*${widthCell}*${gsmCell}/10000` } as any);
@@ -183,7 +199,7 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   const qtyPerSetCell = put(r, 2, ctx.qtyPerSet);
   r++;
   put(r, 1, 'Qty (Kg) / Set');
-  put(r, 2, { formula: `${pieceWeightCell}*${qtyPerSetCell}/1000` } as any);
+  const qtyKgPerSetCell = put(r, 2, { formula: `${pieceWeightCell}*${qtyPerSetCell}/1000` } as any);
   r += 2;
 
   // --- Process parameters (waste/loss chain inputs) ---
@@ -527,7 +543,15 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): { 
   const ratePieceCell = putMoney(r, 2, { formula: `${rateKgCell}*${pieceWeightCell}/1000` } as any);
   ws.getCell(r, 2).font = TITLE_FONT;
 
-  return { rateKgCell: `'${ws.name}'!${rateKgCell}`, ratePieceCell: `'${ws.name}'!${ratePieceCell}` };
+  const sheetRef = (addr: string) => `'${ws.name}'!${addr}`;
+  return {
+    rateKgCell: sheetRef(rateKgCell),
+    ratePieceCell: sheetRef(ratePieceCell),
+    gsmCell: sheetRef(gsmCell),
+    qtyPerSetCell: sheetRef(qtyPerSetCell),
+    qtyKgPerSetCell: sheetRef(qtyKgPerSetCell),
+    marginPctCell: sheetRef(marginCell),
+  };
 }
 
 /** Excel sheet names: max 31 chars, no : \ / ? * [ ] */

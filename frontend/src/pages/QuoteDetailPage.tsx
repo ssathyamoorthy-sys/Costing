@@ -160,6 +160,9 @@ export function QuoteDetailPage() {
   const [showTermsEditor, setShowTermsEditor] = useState(false);
   const [termsForm, setTermsForm] = useState({ marginPct: '', commissionPct: '', wcInterestPct: '', lcInterestPct: '' });
 
+  const [editingEnquiryNo, setEditingEnquiryNo] = useState(false);
+  const [enquiryNoInput, setEnquiryNoInput] = useState('');
+
   function load() {
     api
       .get<Quote>(`/quotes/${id}`)
@@ -697,16 +700,97 @@ export function QuoteDetailPage() {
     }
   }
 
+  function openEnquiryNoEditor() {
+    setEnquiryNoInput(quote!.customerEnquiryNo || '');
+    setEditingEnquiryNo(true);
+  }
+
+  async function saveEnquiryNo() {
+    try {
+      await api.put(`/quotes/${quote!.id}/details`, { customerEnquiryNo: enquiryNoInput || null });
+      setEditingEnquiryNo(false);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   function segmentMixingTotal(seg: FormSegment) {
     return seg.yarnComponents.reduce((s, r) => s + (Number(r.mixingPct) || 0), 0);
+  }
+
+  // Revenue-weighted blended margin across every set in the quote - lets a supervisor see
+  // the whole enquiry's profitability at a glance, not just one set at a time (e.g. right
+  // after "Match to target price" moves one set's margin without changing the others).
+  function consolidatedMargin(): { totalRevenue: number; totalMargin: number; blendedPct: number } | null {
+    let totalRevenue = 0;
+    let totalMargin = 0;
+    let anyPriced = false;
+    for (const line of quote!.lines) {
+      const rollup: { ratePerSet?: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
+      const revenue = (rollup?.ratePerSet?.[currency] ?? 0) * line.qtySets;
+      let marginPct: number | null = null;
+      outer: for (const seg of line.segments) {
+        for (const item of seg.items) {
+          if (!item.costBreakupJson) continue;
+          const b: CostingBreakup = JSON.parse(item.costBreakupJson);
+          if (b.marginPct != null) {
+            marginPct = b.marginPct;
+            break outer;
+          }
+        }
+      }
+      if (marginPct != null && revenue > 0) {
+        anyPriced = true;
+        totalRevenue += revenue;
+        totalMargin += revenue * marginPct;
+      }
+    }
+    if (!anyPriced) return null;
+    return { totalRevenue, totalMargin, blendedPct: totalRevenue > 0 ? totalMargin / totalRevenue : 0 };
   }
 
   return (
     <div>
       <div className="toolbar">
-        <h2>
-          Quote {quote.quoteNo} <span className={`badge ${statusBadgeClass(quote.status)}`}>{statusLabel(quote.status)}</span>
-        </h2>
+        <div>
+          <h2 style={{ marginBottom: 4 }}>
+            Quote {quote.quoteNo} <span className={`badge ${statusBadgeClass(quote.status)}`}>{statusLabel(quote.status)}</span>
+          </h2>
+          {editingEnquiryNo ? (
+            <div className="tag-row" style={{ marginBottom: 8 }}>
+              <span className="muted" style={{ fontSize: 13 }}>
+                Customer enquiry no.
+              </span>
+              <input
+                value={enquiryNoInput}
+                onChange={(e) => setEnquiryNoInput(e.target.value)}
+                placeholder="their RFQ / reference number"
+                style={{ width: 220 }}
+              />
+              <button className="btn small primary" onClick={saveEnquiryNo}>
+                Save
+              </button>
+              <button className="btn small" onClick={() => setEditingEnquiryNo(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            ((quote.status === 'DRAFT' && isOwner && isMerchandiser) || isSupervisor) && (
+              <p className="muted" style={{ marginTop: 0, marginBottom: 8, fontSize: 13 }}>
+                Customer enquiry no.: {quote.customerEnquiryNo || <em>not set</em>}{' '}
+                <button className="btn small" onClick={openEnquiryNoEditor} style={{ marginLeft: 6 }}>
+                  Edit
+                </button>
+              </p>
+            )
+          )}
+          {!editingEnquiryNo && !((quote.status === 'DRAFT' && isOwner && isMerchandiser) || isSupervisor) && quote.customerEnquiryNo && (
+            <p className="muted" style={{ marginTop: 0, marginBottom: 8, fontSize: 13 }}>
+              Customer enquiry no.: {quote.customerEnquiryNo}
+            </p>
+          )}
+        </div>
         <div className="tag-row">
           {quote.status === 'DRAFT' && isOwner && isMerchandiser && quote.lines.length > 0 && (
             <button className="btn primary" onClick={submitQuote}>
@@ -1025,6 +1109,42 @@ export function QuoteDetailPage() {
           )}
         </div>
       )}
+
+      {isSupervisor &&
+        quote.lines.length > 0 &&
+        (() => {
+          const consolidated = consolidatedMargin();
+          if (!consolidated) return null;
+          return (
+            <div className="panel" style={{ marginBottom: 14 }}>
+              <h4 style={{ margin: '0 0 8px' }}>Consolidated margin - whole enquiry</h4>
+              <div className="highlight-stats">
+                <div className="stat-tile">
+                  <div className="stat-label">Blended margin %</div>
+                  <div className="stat-value">{(consolidated.blendedPct * 100).toFixed(2)}%</div>
+                </div>
+                <div className="stat-tile">
+                  <div className="stat-label">Total revenue ({currency})</div>
+                  <div className="stat-value">
+                    {symbol}
+                    {consolidated.totalRevenue.toFixed(2)}
+                  </div>
+                </div>
+                <div className="stat-tile">
+                  <div className="stat-label">Total margin ({currency})</div>
+                  <div className="stat-value">
+                    {symbol}
+                    {consolidated.totalMargin.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+              <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                Revenue-weighted across every priced set in this quote, in {currency} - updates immediately after any
+                margin change (e.g. "Match to target price" on one set).
+              </p>
+            </div>
+          );
+        })()}
 
       {quote.lines.map((line, lineIdx) => {
         const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;

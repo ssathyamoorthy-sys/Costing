@@ -64,9 +64,14 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     segment: string;
     item: string;
     size: string;
+    gsmFormula: string;
     qty: number;
+    qtyPerSetFormula: string;
+    qtySets: number;
+    qtyKgPerSetFormula: string;
     rateKgFormula: string;
     ratePcFormula: string;
+    marginPctFormula: string;
   }
   const summaryRows: SummaryRow[] = [];
 
@@ -124,6 +129,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
 
         const ctx: ItemSheetContext = {
           quoteNo: quote.quoteNo,
+          customerEnquiryNo: quote.customerEnquiryNo,
           customerName: quote.customer.name,
           setNo: lineIdx + 1,
           segmentLabel: `${seg.product.code}${seg.product.name ? ` - ${seg.product.name}` : ''}`,
@@ -170,52 +176,120 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
 
         const sheetName = uniqueSheetName(`S${lineIdx + 1}-${item.itemType.name}`);
         const ws = wb.addWorksheet(sheetName);
-        const { rateKgCell, ratePieceCell } = writeItemSheet(ws, ctx);
+        const { rateKgCell, ratePieceCell, gsmCell, qtyPerSetCell, qtyKgPerSetCell, marginPctCell } = writeItemSheet(ws, ctx);
 
         summaryRows.push({
           setNo: lineIdx + 1,
           segment: ctx.segmentLabel,
           item: item.itemType.name,
           size: isGarment ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.lengthCm}x${item.widthCm}`,
+          gsmFormula: gsmCell,
           qty: item.qtyPerSet,
+          qtyPerSetFormula: qtyPerSetCell,
+          qtySets: line.qtySets,
+          qtyKgPerSetFormula: qtyKgPerSetCell,
           rateKgFormula: rateKgCell,
           ratePcFormula: ratePieceCell,
+          marginPctFormula: marginPctCell,
         });
       }
     }
   }
 
-  summaryWs.mergeCells(1, 1, 1, 7);
-  summaryWs.getCell(1, 1).value = `Quote ${quote.quoteNo} - ${quote.customer.name} - ${quote.createdAt.toDateString()} - Currency: ${quote.currency}`;
+  summaryWs.mergeCells(1, 1, 1, 12);
+  const summaryTitleParts = [`Quote ${quote.quoteNo}`];
+  if (quote.customerEnquiryNo) summaryTitleParts.push(`Enquiry No ${quote.customerEnquiryNo}`);
+  summaryTitleParts.push(quote.customer.name, quote.createdAt.toDateString(), `Currency: ${quote.currency}`);
+  summaryWs.getCell(1, 1).value = summaryTitleParts.join(' - ');
   summaryWs.getCell(1, 1).font = { bold: true, size: 13 };
 
-  const headers = ['Set #', 'Segment (Quality)', 'Item', 'Size (cm)', 'Qty/Set', `Rate/Kg (${quote.currency})`, `Rate/Pc (${quote.currency})`];
+  const YELLOW_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+  const headers = [
+    'Set #',
+    'Segment (Quality)',
+    'Item',
+    'Size (cm)',
+    'GSM',
+    'Qty/Set',
+    'Qty in Pcs',
+    'Qty in Kg',
+    `Rate/Kg (${quote.currency})`,
+    `Rate/Pc (${quote.currency})`,
+    'Margin %',
+    'Total Margin',
+  ];
+  const highlightedHeaders = new Set(['GSM', 'Qty in Pcs', 'Qty in Kg', 'Margin %', 'Total Margin']);
   headers.forEach((h, i) => {
-    summaryWs.getCell(3, i + 1).value = h;
-    summaryWs.getCell(3, i + 1).font = { bold: true };
+    const cell = summaryWs.getCell(3, i + 1);
+    cell.value = h;
+    cell.font = { bold: true };
+    if (highlightedHeaders.has(h)) cell.fill = YELLOW_FILL;
   });
   summaryWs.columns = [
     { width: 8 },
     { width: 24 },
     { width: 16 },
     { width: 14 },
+    { width: 8 },
     { width: 10 },
+    { width: 12 },
+    { width: 12 },
     { width: 16 },
+    { width: 16 },
+    { width: 10 },
     { width: 16 },
   ];
 
   let row = 4;
+  const firstDataRow = row;
   for (const s of summaryRows) {
     summaryWs.getCell(row, 1).value = s.setNo;
     summaryWs.getCell(row, 2).value = s.segment;
     summaryWs.getCell(row, 3).value = s.item;
     summaryWs.getCell(row, 4).value = s.size;
-    summaryWs.getCell(row, 5).value = s.qty;
-    summaryWs.getCell(row, 6).value = { formula: s.rateKgFormula } as any;
-    summaryWs.getCell(row, 6).numFmt = '#,##0.0000';
-    summaryWs.getCell(row, 7).value = { formula: s.ratePcFormula } as any;
-    summaryWs.getCell(row, 7).numFmt = '#,##0.0000';
+    summaryWs.getCell(row, 5).value = { formula: s.gsmFormula } as any;
+    summaryWs.getCell(row, 6).value = { formula: s.qtyPerSetFormula } as any;
+    // Qty in Pcs / Qty in Kg are for the WHOLE order (qtySets sets), not just one set - the
+    // number of sets ordered isn't itself a cell anywhere in this workbook (it lives on the
+    // quote line, outside any one item's sheet), so it's baked in as a literal multiplier.
+    summaryWs.getCell(row, 7).value = { formula: `F${row}*${s.qtySets}` } as any;
+    summaryWs.getCell(row, 7).numFmt = '#,##0';
+    summaryWs.getCell(row, 8).value = { formula: `${s.qtyKgPerSetFormula}*${s.qtySets}` } as any;
+    summaryWs.getCell(row, 8).numFmt = '#,##0.000';
+    summaryWs.getCell(row, 9).value = { formula: s.rateKgFormula } as any;
+    summaryWs.getCell(row, 9).numFmt = '#,##0.0000';
+    summaryWs.getCell(row, 10).value = { formula: s.ratePcFormula } as any;
+    summaryWs.getCell(row, 10).numFmt = '#,##0.0000';
+    summaryWs.getCell(row, 11).value = { formula: s.marginPctFormula } as any;
+    summaryWs.getCell(row, 11).numFmt = '0.00%';
+    // Total Margin = Rate/Pc x Qty in Pcs x Margin % - the margin earned on this row's full
+    // ordered quantity, in the quote's currency.
+    summaryWs.getCell(row, 12).value = { formula: `J${row}*G${row}*K${row}` } as any;
+    summaryWs.getCell(row, 12).numFmt = '#,##0.00';
     row++;
+  }
+  const lastDataRow = row - 1;
+
+  if (summaryRows.length > 0) {
+    const totalsRow = row;
+    summaryWs.getCell(totalsRow, 2).value = 'TOTAL / CONSOLIDATED';
+    summaryWs.getCell(totalsRow, 2).font = { bold: true };
+    summaryWs.getCell(totalsRow, 7).value = { formula: `SUM(G${firstDataRow}:G${lastDataRow})` } as any;
+    summaryWs.getCell(totalsRow, 7).numFmt = '#,##0';
+    summaryWs.getCell(totalsRow, 8).value = { formula: `SUM(H${firstDataRow}:H${lastDataRow})` } as any;
+    summaryWs.getCell(totalsRow, 8).numFmt = '#,##0.000';
+    summaryWs.getCell(totalsRow, 12).value = { formula: `SUM(L${firstDataRow}:L${lastDataRow})` } as any;
+    summaryWs.getCell(totalsRow, 12).numFmt = '#,##0.00';
+    // Consolidated (revenue-weighted) margin % for the whole enquiry: total margin divided
+    // by total revenue (Rate/Pc x Qty in Pcs, summed across every row).
+    summaryWs.getCell(totalsRow, 11).value = {
+      formula: `L${totalsRow}/SUMPRODUCT(J${firstDataRow}:J${lastDataRow},G${firstDataRow}:G${lastDataRow})`,
+    } as any;
+    summaryWs.getCell(totalsRow, 11).numFmt = '0.00%';
+    for (const col of [2, 7, 8, 11, 12]) {
+      summaryWs.getCell(totalsRow, col).font = { bold: true };
+      summaryWs.getCell(totalsRow, col).fill = YELLOW_FILL;
+    }
   }
 
   return wb;
