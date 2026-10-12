@@ -52,6 +52,9 @@ if /i not "%CONFIRM%"=="y" (
 echo.
 echo [1/7] Stopping the service (so the rebuild can replace files it has open)...
 "%NSSM_PATH%" stop %SERVICE_NAME%
+REM Best-effort: catch anything else still holding the old build's files open
+REM (safe on a single-purpose server dedicated to running only this app).
+taskkill /F /IM node.exe /T >nul 2>&1
 REM A few seconds for Windows to fully release file handles (the Prisma query engine
 REM .dll in particular) after the process exits.
 timeout /t 5 /nobreak >nul
@@ -70,10 +73,19 @@ if errorlevel 1 goto :error
 echo.
 echo [4/7] Regenerating Prisma Client for that version's schema...
 REM Needed even going backward - npm's allowScripts gate blocks the postinstall
-REM hook that would otherwise do this automatically (see redeploy.bat). The
-REM service is already stopped (step 1), so the engine .dll isn't locked.
+REM hook that would otherwise do this automatically (see redeploy.bat). Retries
+REM a few times in case of a transient file lock (e.g. antivirus scanning the
+REM freshly-written .dll) even though the service is already stopped.
+set GENERATE_TRY=0
+:generate_retry
 call npx prisma generate
-if errorlevel 1 goto :error
+if not errorlevel 1 goto :generate_done
+set /a GENERATE_TRY+=1
+if %GENERATE_TRY% GEQ 5 goto :error
+echo Prisma generate failed ^(attempt %GENERATE_TRY%/5^). Retrying in 5 seconds...
+timeout /t 5 /nobreak >nul
+goto :generate_retry
+:generate_done
 
 echo.
 echo [5/7] Rebuilding backend...

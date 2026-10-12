@@ -45,6 +45,11 @@ echo (run deploy\rollback.bat to return to this exact version if something break
 echo.
 echo [2/9] Stopping the service (so the rebuild can replace files it has open)...
 "%NSSM_PATH%" stop %SERVICE_NAME%
+REM Best-effort: make sure nothing is still holding the old build's files open,
+REM even if the service didn't fully release them, or something else (a manual
+REM debug run, a leftover process) has a handle on them. Safe on a single-purpose
+REM server dedicated to running only this app.
+taskkill /F /IM node.exe /T >nul 2>&1
 REM A few seconds for Windows to fully release file handles (the Prisma query engine
 REM .dll in particular) after the process exits - without this, a rebuild started
 REM immediately can still hit "EPERM: operation not permitted" trying to replace it.
@@ -77,9 +82,20 @@ REM normally runs this automatically) by default, so the generated TypeScript ty
 REM silently go stale after a schema change and the build below fails with "property
 REM does not exist" errors. Running it explicitly here never depends on that hook.
 REM (The service was already stopped in step 2, so the engine .dll it would
-REM otherwise overwrite isn't locked by a running process.)
+REM otherwise overwrite isn't locked by a running process - but even then, Windows
+REM antivirus can transiently lock a freshly-written .dll while it scans it, so
+REM this retries a few times rather than failing on the first EPERM.)
+set GENERATE_TRY=0
+:generate_retry
 call npx prisma generate
-if errorlevel 1 goto :error
+if not errorlevel 1 goto :generate_done
+set /a GENERATE_TRY+=1
+if %GENERATE_TRY% GEQ 5 goto :error
+echo Prisma generate failed ^(attempt %GENERATE_TRY%/5, likely a transient file
+echo lock - e.g. antivirus scanning the new file^). Retrying in 5 seconds...
+timeout /t 5 /nobreak >nul
+goto :generate_retry
+:generate_done
 
 echo.
 echo [6/9] Building backend...
