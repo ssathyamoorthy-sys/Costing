@@ -73,7 +73,7 @@ export function QuotesListPage() {
     }
   }
 
-  const canCreate = user?.role === 'MERCHANDISER' || user?.role === 'ADMIN';
+  const canCreate = user?.role === 'MERCHANDISER' || user?.role === 'SUPERVISOR' || user?.role === 'ADMIN';
 
   return (
     <div>

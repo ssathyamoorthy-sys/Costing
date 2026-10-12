@@ -41,6 +41,15 @@ function sanitizeLinesForRole<T extends { segments: { items: { costBreakupJson: 
   return lines.map((l) => sanitizeLineForRole(l, role));
 }
 
+// The Pile slot carries the towel's loop/terry yarn - shown by its master description (e.g.
+// "16s Ring Spun Combed") on customer-facing downloads, falling back to the code if no
+// description is set in Raw Material Master.
+function pileYarnDescription(seg: { yarnComponents: { slot: string; rawMaterial: { code: string; description: string | null } }[] }) {
+  const pile = seg.yarnComponents.find((c) => c.slot.trim().toLowerCase() === 'pile');
+  if (!pile) return '';
+  return pile.rawMaterial.description || pile.rawMaterial.code;
+}
+
 // Recomputes every item in a quote line (Set) off current rates/overrides and writes the
 // fresh cost breakup back to the DB. Shared by anything that changes a pricing input for
 // an existing line: material overrides, and quote-level margin/commission/interest overrides.
@@ -106,7 +115,7 @@ async function recomputeLine(quoteLineId: number) {
 async function assertNotLocked(quoteId: number, role: string): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const quote = await prisma.quote.findUnique({ where: { id: quoteId }, select: { locked: true } });
   if (!quote) return { ok: false, status: 404, error: 'Quote not found' };
-  if (quote.locked && role !== 'ADMIN') {
+  if (quote.locked && role !== 'ADMIN' && role !== 'SUPERVISOR') {
     return { ok: false, status: 423, error: 'This quote is locked and finalized - pricing can no longer be changed' };
   }
   return { ok: true };
@@ -207,6 +216,7 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
     { header: 'Set #', key: 'setNo', width: 8 },
     { header: 'Item', key: 'item', width: 16 },
     { header: 'Quality', key: 'quality', width: 20 },
+    { header: 'Pile Yarn', key: 'pileYarn', width: 24 },
     { header: 'Length (cm)', key: 'length', width: 12 },
     { header: 'Width (cm)', key: 'width', width: 12 },
     { header: 'GSM', key: 'gsm', width: 8 },
@@ -225,6 +235,7 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
           setNo: li + 1,
           item: item.itemType.name,
           quality: seg.product.name || seg.product.code,
+          pileYarn: pileYarnDescription(seg),
           length: item.lengthCm,
           width: item.widthCm,
           gsm: item.gsm,
@@ -646,7 +657,7 @@ const createQuoteSchema = z.object({
   customerEnquiryNo: z.string().optional(),
 });
 
-quotesRouter.post('/', requireRole('MERCHANDISER', 'ADMIN'), async (req, res) => {
+quotesRouter.post('/', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
   const parsed = createQuoteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -1253,7 +1264,7 @@ quotesRouter.post('/:id/lines/:lineId/clear-margin-override', requireRole('SUPER
 
 // --- Workflow ---
 
-quotesRouter.post('/:id/submit', requireRole('MERCHANDISER', 'ADMIN'), async (req, res) => {
+quotesRouter.post('/:id/submit', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
   const quoteId = Number(req.params.id);
   const quote = await prisma.quote.findUnique({ where: { id: quoteId }, include: { lines: true } });
   if (!quote) return res.status(404).json({ error: 'Not found' });

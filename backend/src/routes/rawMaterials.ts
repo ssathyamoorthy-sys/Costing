@@ -140,7 +140,7 @@ const newRateSchema = z.object({
   validTo: z.string().datetime().or(z.string().min(1)).optional().nullable(),
 });
 
-rawMaterialsRouter.post('/:id/rates', requireRole('PURCHASE', 'ADMIN'), async (req, res) => {
+rawMaterialsRouter.post('/:id/rates', requireRole('PURCHASE', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
   const parsed = newRateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 

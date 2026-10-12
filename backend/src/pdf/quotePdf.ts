@@ -22,6 +22,7 @@ interface QuoteForPdf {
     costBreakupJson: string | null;
     segments: {
       product: { code: string; name: string | null };
+      yarnComponents: { slot: string; rawMaterial: { code: string; description: string | null } }[];
       items: {
         itemType: { name: string };
         lengthCm: number;
@@ -33,6 +34,15 @@ interface QuoteForPdf {
       }[];
     }[];
   }[];
+}
+
+// The Pile slot carries the towel's loop/terry yarn - the one yarn spec a customer actually
+// cares about on a price list, so it's shown by its master description (e.g. "16s Ring Spun
+// Combed") rather than the internal code, falling back to the code if no description is set.
+function pileYarnDescription(seg: { yarnComponents: { slot: string; rawMaterial: { code: string; description: string | null } }[] }) {
+  const pile = seg.yarnComponents.find((c) => c.slot.trim().toLowerCase() === 'pile');
+  if (!pile) return '';
+  return pile.rawMaterial.description || pile.rawMaterial.code;
 }
 
 function drawTableRow(doc: PDFKit.PDFDocument, y: number, cols: { text: string; width: number; align?: 'left' | 'right' }[], opts: { bold?: boolean } = {}) {
@@ -80,15 +90,16 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   // One flat table across every item in every Set - no per-Set grouping - with a
   // grand-total footer row.
   const cols = [
-    { key: 'item', label: 'Item', width: 60 },
-    { key: 'quality', label: 'Quality', width: 90 },
-    { key: 'size', label: 'Size (cm)', width: 50 },
-    { key: 'gsm', label: 'GSM', width: 28 },
-    { key: 'color', label: 'Color', width: 40 },
-    { key: 'qty', label: 'Qty', width: 40, align: 'right' as const },
-    { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 60, align: 'right' as const },
-    { key: 'totalKg', label: 'Total Qty in Kg', width: 65, align: 'right' as const },
-    { key: 'totalValue', label: 'Total Value', width: 65, align: 'right' as const },
+    { key: 'item', label: 'Item', width: 55 },
+    { key: 'quality', label: 'Quality', width: 75 },
+    { key: 'pileYarn', label: 'Pile Yarn', width: 65 },
+    { key: 'size', label: 'Size (cm)', width: 45 },
+    { key: 'gsm', label: 'GSM', width: 25 },
+    { key: 'color', label: 'Color', width: 35 },
+    { key: 'qty', label: 'Qty', width: 35, align: 'right' as const },
+    { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 55, align: 'right' as const },
+    { key: 'totalKg', label: 'Total Qty in Kg', width: 60, align: 'right' as const },
+    { key: 'totalValue', label: 'Total Value', width: 60, align: 'right' as const },
   ];
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
 
@@ -133,13 +144,14 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
         drawTableRow(doc, y, [
           { text: item.itemType.name, width: cols[0].width },
           { text: seg.product.name || seg.product.code, width: cols[1].width },
-          { text: `${item.lengthCm}x${item.widthCm}`, width: cols[2].width },
-          { text: String(item.gsm), width: cols[3].width },
-          { text: line.color, width: cols[4].width },
-          { text: qty.toLocaleString(), width: cols[5].width, align: 'right' },
-          { text: ratePc != null ? ratePc.toFixed(2) : '-', width: cols[6].width, align: 'right' },
-          { text: totalKg.toFixed(1), width: cols[7].width, align: 'right' },
-          { text: totalValue != null ? totalValue.toFixed(2) : '-', width: cols[8].width, align: 'right' },
+          { text: pileYarnDescription(seg), width: cols[2].width },
+          { text: `${item.lengthCm}x${item.widthCm}`, width: cols[3].width },
+          { text: String(item.gsm), width: cols[4].width },
+          { text: line.color, width: cols[5].width },
+          { text: qty.toLocaleString(), width: cols[6].width, align: 'right' },
+          { text: ratePc != null ? ratePc.toFixed(2) : '-', width: cols[7].width, align: 'right' },
+          { text: totalKg.toFixed(1), width: cols[8].width, align: 'right' },
+          { text: totalValue != null ? totalValue.toFixed(2) : '-', width: cols[9].width, align: 'right' },
         ]);
         y += 16;
       }
@@ -153,11 +165,11 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
     doc,
     y,
     [
-      { text: 'Grand Total', width: cols[0].width + cols[1].width + cols[2].width + cols[3].width + cols[4].width },
-      { text: grandQty.toLocaleString(), width: cols[5].width, align: 'right' },
-      { text: '', width: cols[6].width, align: 'right' },
-      { text: grandKg.toFixed(1), width: cols[7].width, align: 'right' },
-      { text: `${symbol}${grandValue.toFixed(2)}`, width: cols[8].width, align: 'right' },
+      { text: 'Grand Total', width: cols[0].width + cols[1].width + cols[2].width + cols[3].width + cols[4].width + cols[5].width },
+      { text: grandQty.toLocaleString(), width: cols[6].width, align: 'right' },
+      { text: '', width: cols[7].width, align: 'right' },
+      { text: grandKg.toFixed(1), width: cols[8].width, align: 'right' },
+      { text: `${symbol}${grandValue.toFixed(2)}`, width: cols[9].width, align: 'right' },
     ],
     { bold: true },
   );

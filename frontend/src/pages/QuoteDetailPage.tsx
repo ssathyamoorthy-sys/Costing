@@ -114,6 +114,12 @@ function emptyItem(): FormItem {
 function sizeLabel(item: { lengthCm: number; widthCm: number; fabricConsumptionSqm?: number | null }) {
   return item.fabricConsumptionSqm ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.lengthCm}x${item.widthCm}cm`;
 }
+// The Pile slot carries the towel's loop/terry yarn - the single most commercially relevant
+// yarn code to a merchandiser at a glance, so it's surfaced outside the Supervisor-only
+// "Yarn recipe" breakdown table.
+function pileYarnCode(seg: { yarnComponents: { slot: string; rawMaterial?: { code: string } | null }[] }) {
+  return seg.yarnComponents.find((c) => c.slot.trim().toLowerCase() === 'pile')?.rawMaterial?.code ?? null;
+}
 function emptySegment(): FormSegment {
   return { productId: '', yarnComponents: [], items: [emptyItem()] };
 }
@@ -193,10 +199,10 @@ export function QuoteDetailPage() {
   const isMerchandiser = user?.role === 'MERCHANDISER' || user?.role === 'ADMIN';
   const isSupervisor = user?.role === 'SUPERVISOR' || user?.role === 'ADMIN';
   const isAdmin = user?.role === 'ADMIN';
-  // Once locked, pricing is irrevocable for everyone except Admin (emergency escape hatch) -
-  // every price-mutating button in this page is gated on this, matching assertNotLocked
-  // on the backend.
-  const pricingLocked = quote.locked && !isAdmin;
+  // Once locked, pricing is irrevocable for everyone except Admin/Supervisor (emergency
+  // escape hatch) - every price-mutating button in this page is gated on this, matching
+  // assertNotLocked on the backend.
+  const pricingLocked = quote.locked && !isAdmin && !isSupervisor;
   // Supervisor can keep negotiating (yarn/margin overrides, line edits) through APPROVED and
   // SENT - that's the whole point of a negotiation round - right up until the quote is locked.
   const canEditLines =
@@ -820,7 +826,7 @@ export function QuoteDetailPage() {
           )}
         </div>
         <div className="tag-row">
-          {quote.status === 'DRAFT' && isOwner && isMerchandiser && quote.lines.length > 0 && (
+          {quote.status === 'DRAFT' && isOwner && (isMerchandiser || isSupervisor) && quote.lines.length > 0 && (
             <button className="btn primary" onClick={submitQuote}>
               Submit for approval
             </button>
@@ -1206,6 +1212,7 @@ export function QuoteDetailPage() {
               {!isSingle && (
                 <h4 style={{ margin: '0 0 8px' }}>
                   Segment: {seg.product?.code} - {segLabel}
+                  {pileYarnCode(seg) && <span className="muted"> - Pile Yarn: {pileYarnCode(seg)}</span>}
                 </h4>
               )}
 
@@ -1401,7 +1408,9 @@ export function QuoteDetailPage() {
                     {' '}
                     - {singleSeg!.product?.code}
                     {singleLabel ? ` (${singleLabel})` : ''} - {singleItem!.itemType?.name} - {line.color} - {sizeLabel(singleItem!)}, GSM{' '}
-                    {singleItem!.gsm} - Qty {line.qtySets.toLocaleString()} pcs ({lineTotalKg.toFixed(2)} kg)
+                    {singleItem!.gsm}
+                    {pileYarnCode(singleSeg!) && ` - Pile Yarn: ${pileYarnCode(singleSeg!)}`} - Qty {line.qtySets.toLocaleString()} pcs (
+                    {lineTotalKg.toFixed(2)} kg)
                   </>
                 ) : (
                   <>
