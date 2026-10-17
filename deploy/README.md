@@ -32,13 +32,16 @@ to run on the office network only — not exposed to the public internet.
    DATABASE_URL="file:./prod.db"
    JWT_SECRET="<a long random string - do not reuse the dev default>"
    PORT=4000
+   NODE_ENV=production
    ```
    Generate `JWT_SECRET` with `openssl rand -hex 32`, or:
    ```
    node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
    ```
    It signs login sessions, so it should be unique to this server and kept
-   secret.
+   secret. `NODE_ENV=production` isn't optional - with it set, the app
+   refuses to start if `JWT_SECRET` is missing or still the dev default,
+   instead of silently running with a guessable secret.
 
 5. **Set up the production database:**
    ```
@@ -76,6 +79,32 @@ to run on the office network only — not exposed to the public internet.
    Add a Windows Firewall inbound rule for TCP port 4000, scoped to the
    office's local subnet (not "Any address"). Other PCs on the network can
    then reach the app at `http://<this-server's-hostname-or-IP>:4000`.
+
+8. **Set up nightly automated backups** (Task Scheduler):
+
+   There is no backup of your data without this step. `redeploy.bat`'s
+   pre-migration snapshot (see below) only protects against a bad update -
+   it lives on this same disk, so a disk failure or accidental delete still
+   loses everything without a real backup schedule.
+
+   - Open **Task Scheduler** → **Create Task...** (not "Create Basic Task",
+     so you get the full options below).
+   - **General** tab: name it `Terry Towel Costing Backup`; select "Run
+     whether user is logged on or not"; tick "Run with highest privileges".
+   - **Triggers** tab → **New...**: Daily, at a quiet time (e.g. 2:00 AM).
+   - **Actions** tab → **New...**:
+     - Program/script: full path to `deploy\backup-db.bat` (e.g.
+       `D:\CostingApp\deploy\backup-db.bat`)
+     - Start in: the `deploy` folder itself (e.g. `D:\CostingApp\deploy`)
+   - Save, then right-click the task → **Run** once to confirm it works -
+     you should see a new file appear under `deploy\backups\scheduled\`.
+
+   Backups are kept for 30 days and pruned automatically by the script
+   itself - no separate cleanup task needed. This only writes to the same
+   disk as the live database, though, so it does **not** protect against
+   disk failure or theft - for that, periodically copy the
+   `deploy\backups\scheduled` folder to a second machine, a NAS, or a cloud
+   folder (OneDrive/Google Drive both work fine for this).
 
 ## Updating after a code change
 

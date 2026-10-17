@@ -173,10 +173,25 @@ const lineFull = {
   },
 } as const;
 
+// Shared by every single-quote read endpoint (detail, PDF, xlsx) - same rule as the list
+// above: Merchandiser can only read their own quote, Purchase can't read quotes at all,
+// Supervisor/Admin can read any. Returns the error to send, or null if the read is allowed.
+function visibilityError(quote: { createdById: number }, user: { role: string; userId: number }): { status: number; error: string } | null {
+  if (user.role === 'PURCHASE') return { status: 403, error: 'Quotes are not visible to this role' };
+  if (user.role === 'MERCHANDISER' && quote.createdById !== user.userId) return { status: 403, error: 'Not your quote' };
+  return null;
+}
+
+// Visibility: a Merchandiser sees only the enquiries/quotes they created; Supervisor and
+// Admin see everything; Purchase has no business reason to see quote data at all (it isn't
+// in their nav either - see Layout.tsx) so it's blocked outright.
 quotesRouter.get('/', async (req, res) => {
+  if (req.user!.role === 'PURCHASE') return res.status(403).json({ error: 'Quotes are not visible to this role' });
+
   const mine = req.query.mine === 'true';
+  const scopedToOwn = req.user!.role === 'MERCHANDISER' || mine;
   const quotes = await prisma.quote.findMany({
-    where: mine ? { createdById: req.user!.userId } : undefined,
+    where: scopedToOwn ? { createdById: req.user!.userId } : undefined,
     include: { customer: true, createdBy: { select: { name: true } }, lines: { include: lineFull } },
     orderBy: { createdAt: 'desc' },
   });
@@ -201,6 +216,8 @@ quotesRouter.get('/:id', async (req, res) => {
     },
   });
   if (!quote) return res.status(404).json({ error: 'Not found' });
+  const visErr = visibilityError(quote, req.user!);
+  if (visErr) return res.status(visErr.status).json({ error: visErr.error });
   res.json({ ...quote, lines: sanitizeLinesForRole(quote.lines, req.user!.role) });
 });
 
@@ -210,6 +227,8 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
     include: { customer: true, lines: { include: lineFull } },
   });
   if (!quote) return res.status(404).json({ error: 'Not found' });
+  const visErr = visibilityError(quote, req.user!);
+  if (visErr) return res.status(visErr.status).json({ error: visErr.error });
 
   const currency = quote.currency;
   const columns = [
@@ -278,6 +297,8 @@ quotesRouter.get('/:id/pdf', async (req, res) => {
     include: { customer: true, lines: { include: lineFull } },
   });
   if (!quote) return res.status(404).json({ error: 'Not found' });
+  const visErr = visibilityError(quote, req.user!);
+  if (visErr) return res.status(visErr.status).json({ error: visErr.error });
 
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${quote.quoteNo}.pdf"`);
@@ -1132,7 +1153,12 @@ quotesRouter.post('/:id/segments/:segmentId/material-override', requireRole('SUP
   // Recompute the whole Set - the override affects every item in this segment, and the
   // combined set rate depends on every segment.
   const quoteLineId = segment.quoteLine.id;
-  const warnings = await recomputeLine(quoteLineId);
+  let warnings: string[] | undefined;
+  try {
+    warnings = await recomputeLine(quoteLineId);
+  } catch (err: any) {
+    return res.status(422).json({ error: err.message });
+  }
 
   const updatedLine = await prisma.quoteLine.findUniqueOrThrow({ where: { id: quoteLineId }, include: lineFull });
 
@@ -1165,9 +1191,13 @@ quotesRouter.post('/:id/terms-override', requireRole('SUPERVISOR', 'ADMIN'), asy
   await prisma.quote.update({ where: { id: quoteId }, data: parsed.data });
 
   const warnings: string[] = [];
-  for (const line of quote.lines) {
-    const lineWarnings = await recomputeLine(line.id);
-    if (lineWarnings) warnings.push(...lineWarnings);
+  try {
+    for (const line of quote.lines) {
+      const lineWarnings = await recomputeLine(line.id);
+      if (lineWarnings) warnings.push(...lineWarnings);
+    }
+  } catch (err: any) {
+    return res.status(422).json({ error: err.message });
   }
 
   const updated = await prisma.quote.findUniqueOrThrow({
@@ -1213,7 +1243,12 @@ quotesRouter.post('/:id/lines/:lineId/match-target-price', requireRole('SUPERVIS
   const requiredMargin = 1 - commission - c / line.targetPrice;
 
   await prisma.quoteLine.update({ where: { id: lineId }, data: { marginPctOverride: requiredMargin } });
-  const warnings = await recomputeLine(lineId);
+  let warnings: string[] | undefined;
+  try {
+    warnings = await recomputeLine(lineId);
+  } catch (err: any) {
+    return res.status(422).json({ error: err.message });
+  }
 
   const updatedLine = await prisma.quoteLine.findUniqueOrThrow({ where: { id: lineId }, include: lineFull });
   res.json({ line: sanitizeLineForRole(updatedLine, req.user!.role), marginPctOverride: requiredMargin, warnings });
@@ -1238,7 +1273,12 @@ quotesRouter.post('/:id/lines/:lineId/margin-override', requireRole('SUPERVISOR'
   await snapshotIfNeeded(quoteId, req.user!.userId);
 
   await prisma.quoteLine.update({ where: { id: lineId }, data: { marginPctOverride: parsed.data.marginPctOverride } });
-  const warnings = await recomputeLine(lineId);
+  let warnings: string[] | undefined;
+  try {
+    warnings = await recomputeLine(lineId);
+  } catch (err: any) {
+    return res.status(422).json({ error: err.message });
+  }
 
   const updatedLine = await prisma.quoteLine.findUniqueOrThrow({ where: { id: lineId }, include: lineFull });
   res.json({ line: sanitizeLineForRole(updatedLine, req.user!.role), warnings });
@@ -1256,7 +1296,12 @@ quotesRouter.post('/:id/lines/:lineId/clear-margin-override', requireRole('SUPER
   await snapshotIfNeeded(quoteId, req.user!.userId);
 
   await prisma.quoteLine.update({ where: { id: lineId }, data: { marginPctOverride: null } });
-  const warnings = await recomputeLine(lineId);
+  let warnings: string[] | undefined;
+  try {
+    warnings = await recomputeLine(lineId);
+  } catch (err: any) {
+    return res.status(422).json({ error: err.message });
+  }
 
   const updatedLine = await prisma.quoteLine.findUniqueOrThrow({ where: { id: lineId }, include: lineFull });
   res.json({ line: sanitizeLineForRole(updatedLine, req.user!.role), warnings });

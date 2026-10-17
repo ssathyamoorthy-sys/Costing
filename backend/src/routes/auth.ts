@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { comparePassword, hashPassword, signToken, type Role } from '../lib/auth';
 import { requireAuth } from '../middleware/auth';
+import { checkLoginThrottle, recordLoginFailure, recordLoginSuccess } from '../lib/loginThrottle';
 
 export const authRouter = Router();
 
@@ -16,11 +17,24 @@ authRouter.post('/login', async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'username and password are required' });
 
   const { username, password } = parsed.data;
+
+  const throttle = checkLoginThrottle(username);
+  if (throttle.blocked) {
+    return res.status(429).json({ error: `Too many failed login attempts - try again in ${Math.ceil((throttle.retryAfterSeconds ?? 60) / 60)} minute(s).` });
+  }
+
   const user = await prisma.user.findUnique({ where: { username } });
-  if (!user || !user.active) return res.status(401).json({ error: 'Invalid credentials' });
+  if (!user || !user.active) {
+    recordLoginFailure(username);
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
 
   const valid = await comparePassword(password, user.passwordHash);
-  if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+  if (!valid) {
+    recordLoginFailure(username);
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  recordLoginSuccess(username);
 
   const token = signToken({ userId: user.id, username: user.username, role: user.role as Role });
   res.json({

@@ -195,6 +195,30 @@ export function computeCosting(input: CostingInput): CostingBreakup {
   const processingOrWashingRatePerKg = isYarnDyed ? washingCostPerKg : processingChargeRatePerKg;
   const processingOrWashingLossPct = isYarnDyed ? washingLossPct : weightLossPct;
 
+  // Every stage below divides by (1 - pct) - a loss % reaching 100% (or more) divides by
+  // zero or a negative number, silently producing Infinity/NaN instead of a price. Guard it
+  // here, once, so every caller (quote lines, templates, cost-sheet import) is protected
+  // regardless of which master/override field the bad value came from.
+  const lossStages: [string, number][] = [
+    ['Weaving wastage %', weavingWastagePct],
+    ['First velour loss %', firstVelourLossPct],
+    [isYarnDyed ? 'Washing loss %' : 'Weight loss %', processingOrWashingLossPct],
+    ['Second velour loss %', secondVelourLossPct],
+    ['Rejection %', rejectionPct],
+  ];
+  if (isYarnDyed) lossStages.unshift(['Yarn dyeing process loss %', yarnDyeingProcessLossPct]);
+  if (isGarment && secondRejectionPct) lossStages.push(['Second rejection %', secondRejectionPct]);
+  for (const [label, value] of lossStages) {
+    if (value >= 1) {
+      throw new Error(`${label} is ${(value * 100).toFixed(1)}% - it must be below 100%, otherwise the cost calculation divides by zero.`);
+    }
+  }
+  if (marginPct + commissionPct >= 1) {
+    throw new Error(
+      `Margin + commission (${((marginPct + commissionPct) * 100).toFixed(1)}%) is 100% or more - the price cannot be computed. Reduce the margin or commission.`,
+    );
+  }
+
   // --- BOM waste-compounding chain (sheet cols H1:J7, extended for yarn-dyed/garment) ---
   // J2 = 1 (base), then each stage divides by (1 - waste%) to find how much input
   // material is needed upstream to yield 1kg of good output downstream. Yarn-dyed adds a

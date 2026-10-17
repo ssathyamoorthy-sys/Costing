@@ -148,7 +148,7 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
 
     const mixingTotal = segInput.yarnComponents.reduce((s, c) => s + c.mixingPct, 0);
     if (Math.abs(mixingTotal - 100) > 0.5) {
-      warnings.push(`${product.code}: yarn mixing % totals ${mixingTotal.toFixed(1)}, expected 100.`);
+      throw new Error(`${product.code}: yarn mixing % totals ${mixingTotal.toFixed(1)}%, must total 100% (within 0.5%) before this set can be priced.`);
     }
 
     const resolvedYarn: { slot: string; mixingPct: number; pricePerKg: number; dyeingCostPerKg: number }[] = [];

@@ -26,7 +26,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [1/9] Recording current version for rollback...
+echo [1/10] Recording current version for rollback...
 if not exist deploy mkdir deploy
 git rev-parse HEAD > deploy\.previous-commit.txt
 if errorlevel 1 (
@@ -39,7 +39,7 @@ echo Current version saved as rollback point: %PREV_COMMIT%
 echo (run deploy\rollback.bat to return to this exact version if something breaks)
 
 echo.
-echo [2/9] Stopping the service (so the rebuild can replace files it has open)...
+echo [2/10] Stopping the service (so the rebuild can replace files it has open)...
 REM Using "net stop" (built into every Windows install, no PATH dependency on
 REM nssm.exe) rather than "nssm stop" - and specifically NOT taskkill, which
 REM would bypass NSSM's own stop handling and look like a crash, triggering its
@@ -52,7 +52,7 @@ REM immediately can still hit "EPERM: operation not permitted" trying to replace
 timeout /t 5 /nobreak >nul
 
 echo.
-echo [3/9] Pulling latest code from GitHub...
+echo [3/10] Pulling latest code from GitHub...
 REM npm regenerates package-lock.json slightly on every install (platform-specific
 REM optional-dependency resolution), which leaves it locally modified and blocks a
 REM clean pull with "local changes would be overwritten." It's just a lockfile -
@@ -66,13 +66,13 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/9] Installing backend dependencies...
+echo [4/10] Installing backend dependencies...
 cd backend
 call npm install
 if errorlevel 1 goto :error
 
 echo.
-echo [5/9] Regenerating Prisma Client from the current schema...
+echo [5/10] Regenerating Prisma Client from the current schema...
 REM npm's allowScripts security gate blocks @prisma/client's postinstall hook (which
 REM normally runs this automatically) by default, so the generated TypeScript types
 REM silently go stale after a schema change and the build below fails with "property
@@ -94,19 +94,42 @@ goto :generate_retry
 :generate_done
 
 echo.
-echo [6/9] Building backend...
+echo [6/10] Building backend...
 call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [7/9] Applying database migrations (safe to run even if there are none -
+echo [7/10] Backing up the database before migrating...
+REM The service is already stopped (step 2), so nothing is writing to prod.db right
+REM now - a plain file copy is safe. This is a cheap, local safety net specifically
+REM for "the migration about to run breaks something" - it is NOT a substitute for
+REM the real nightly backup (see deploy\backup-db.bat), which also protects against
+REM disk failure, since both would otherwise live on this same disk.
+cd /d "%APP_DIR%"
+if exist backend\prod.db (
+    if not exist deploy\backups mkdir deploy\backups
+    for /f %%T in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set TS=%%T
+    copy /y backend\prod.db "deploy\backups\prod-pre-migrate-!TS!.db" >nul
+    if errorlevel 1 (
+        echo WARNING: could not back up prod.db - continuing anyway, but there will be
+        echo no pre-migration snapshot to restore from if this migration goes wrong.
+    ) else (
+        echo Backup saved: deploy\backups\prod-pre-migrate-!TS!.db
+    )
+) else (
+    echo No backend\prod.db yet - nothing to back up on a fresh install.
+)
+
+echo.
+echo [8/10] Applying database migrations (safe to run even if there are none -
 echo       every migration in this project only ADDS fields, never removes
 echo       or changes existing ones, so your existing data is never touched)...
+cd backend
 call npx prisma migrate deploy
 if errorlevel 1 goto :error
 
 echo.
-echo [8/9] Installing and building frontend...
+echo [9/10] Installing and building frontend...
 cd ..\frontend
 call npm install
 if errorlevel 1 goto :error
@@ -114,7 +137,7 @@ call npm run build
 if errorlevel 1 goto :error
 
 echo.
-echo [9/9] Starting the service...
+echo [10/10] Starting the service...
 cd /d "%APP_DIR%"
 net start %SERVICE_NAME%
 if errorlevel 1 (

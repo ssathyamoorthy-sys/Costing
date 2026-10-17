@@ -95,6 +95,7 @@ export function QuotesListPage() {
               <th>Customer</th>
               <th>Currency</th>
               <th>Status</th>
+              <th>CVN</th>
               <th>Lines</th>
               <th>Created by</th>
               <th>Created</th>
@@ -114,6 +115,7 @@ export function QuotesListPage() {
                 <td>
                   <span className={`badge ${statusBadgeClass(q.status)}`}>{statusLabel(q.status)}</span>
                 </td>
+                <td className="mono muted">{q.finalReferenceNo || '-'}</td>
                 <td>{q.lines.length}</td>
                 <td className="muted">{q.createdBy?.name}</td>
                 <td className="muted">{new Date(q.createdAt).toLocaleDateString()}</td>

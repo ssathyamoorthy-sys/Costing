@@ -242,3 +242,24 @@ describe('validateMixing', () => {
     expect(total).toBe(80);
   });
 });
+
+// A loss % reaching 100% divides by zero in the BOM chain (engine.ts ~line 198-219); a
+// margin+commission reaching 100% does the same in the final price formula. Both used to
+// silently produce Infinity/NaN - they now throw a clear error instead.
+describe('computeCosting - rejects inputs that would divide by zero', () => {
+  it('throws if a loss % reaches 100%', () => {
+    expect(() => computeCosting({ ...fixture70x140, weightLossPct: 1 })).toThrow(/Weight loss %/);
+  });
+
+  it('throws if a loss % exceeds 100%', () => {
+    expect(() => computeCosting({ ...fixture70x140, rejectionPct: 1.2 })).toThrow(/Rejection %/);
+  });
+
+  it('throws if margin + commission reaches 100%', () => {
+    expect(() => computeCosting({ ...fixture70x140, marginPct: 0.8, commissionPct: 0.2 })).toThrow(/Margin \+ commission/);
+  });
+
+  it('does not throw for loss %/margin+commission safely under 100%', () => {
+    expect(() => computeCosting(fixture70x140)).not.toThrow();
+  });
+});
