@@ -120,6 +120,13 @@ function sizeLabel(item: { lengthCm: number; widthCm: number; fabricConsumptionS
 function pileYarnCode(seg: { yarnComponents: { slot: string; rawMaterial?: { code: string } | null }[] }) {
   return seg.yarnComponents.find((c) => c.slot.trim().toLowerCase() === 'pile')?.rawMaterial?.code ?? null;
 }
+// "Single Product" means truly one simple piece per set (1 segment, 1 item type, 1 pc/set).
+// A single item type with qtyPerSet > 1 (e.g. a 4-pack sold as one set) is still a
+// bundle-style quantity structure - it needs its own Qty/Set field, not a flattened "N pcs"
+// that silently drops the per-set count.
+function isSingleLine(segments: { items: { qtyPerSet: number }[] }[]): boolean {
+  return segments.length === 1 && segments[0].items.length === 1 && segments[0].items[0].qtyPerSet === 1;
+}
 function emptySegment(): FormSegment {
   return { productId: '', yarnComponents: [], items: [emptyItem()] };
 }
@@ -244,12 +251,15 @@ export function QuoteDetailPage() {
         })),
       })),
     });
-    setMode(line.segments.length === 1 && line.segments[0].items.length === 1 ? 'single' : 'bundle');
+    setMode(isSingleLine(line.segments) ? 'single' : 'bundle');
     setShowYarnEditorSingle(false);
     setSelectedTemplateId('');
     setShowForm(true);
   }
 
+  // Deliberately structural only (not qtyPerSet) - toSingleMode() below already knows how to
+  // merge a qtyPerSet > 1 single item into a flat piece count, so that manual conversion
+  // stays available even when the line isn't already "single" shaped.
   function canUseSingleMode(f: SetForm) {
     return f.segments.length === 1 && f.segments[0].items.length === 1;
   }
@@ -287,7 +297,7 @@ export function QuoteDetailPage() {
         })),
       })),
     });
-    setMode(template.segments.length === 1 && template.segments[0].items.length === 1 ? 'single' : 'bundle');
+    setMode(isSingleLine(template.segments) ? 'single' : 'bundle');
     setShowYarnEditorSingle(false);
   }
 
@@ -1193,7 +1203,7 @@ export function QuoteDetailPage() {
           requiredMarginPct = 1 - commission - c / line.targetPrice;
         }
         const isExpanded = expanded[line.id];
-        const isSingle = line.segments.length === 1 && line.segments[0].items.length === 1;
+        const isSingle = isSingleLine(line.segments);
         const singleSeg = isSingle ? line.segments[0] : null;
         const singleItem = isSingle ? singleSeg!.items[0] : null;
         const singleLabel = singleSeg?.product?.name || singleSeg?.product?.code || '';

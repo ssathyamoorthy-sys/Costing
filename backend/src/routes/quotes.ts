@@ -246,7 +246,10 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
 
   const rows: Record<string, unknown>[] = [];
   quote.lines.forEach((line, li) => {
-    const isSingle = line.segments.length === 1 && line.segments[0].items.length === 1;
+    // "Single" means truly one simple piece per set (1 segment, 1 item, 1 pc/set) - a single
+    // item type with qtyPerSet > 1 (e.g. a 4-pack sold as one set) is still a bundle-style
+    // quantity structure and must keep its own Qty/Set column, not collapse into "N pcs".
+    const isSingle = line.segments.length === 1 && line.segments[0].items.length === 1 && line.segments[0].items[0].qtyPerSet === 1;
     for (const seg of line.segments) {
       for (const item of seg.items) {
         const breakup: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
