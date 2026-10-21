@@ -187,6 +187,13 @@ export function QuoteDetailPage() {
       .catch(() => {});
   }
   useEffect(load, [id]);
+  // The error banner renders once, near the top of the page - but most of the buttons that can
+  // fail (Match target price, margin overrides, etc.) live inside a Set card far down a long
+  // quote. Without this, a failed action looks like it silently did nothing: the error was set,
+  // but it's off-screen above the fold and nothing draws the eye back up to it.
+  useEffect(() => {
+    if (error) window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [error]);
   useEffect(() => {
     api.get<Product[]>('/products').then(setProducts);
     api.get<ItemType[]>('/item-types').then(setItemTypes);
