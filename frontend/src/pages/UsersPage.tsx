@@ -15,7 +15,7 @@ interface ManagedUser {
   createdAt: string;
 }
 
-const ROLES: Role[] = ['MERCHANDISER', 'PURCHASE', 'SUPERVISOR', 'ADMIN'];
+const ROLES: Role[] = ['MERCHANDISER', 'PURCHASE', 'SUPERVISOR', 'FINANCE_MANAGER', 'ADMIN'];
 
 export function UsersPage() {
   const { user: me } = useAuth();

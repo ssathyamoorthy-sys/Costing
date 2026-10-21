@@ -149,6 +149,7 @@ export function QuoteDetailPage() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [uploadingPO, setUploadingPO] = useState(false);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
   const [showForm, setShowForm] = useState(false);
@@ -212,6 +213,11 @@ export function QuoteDetailPage() {
   const isOwner = quote.createdById === user?.id;
   const isMerchandiser = user?.role === 'MERCHANDISER' || user?.role === 'ADMIN';
   const isSupervisor = user?.role === 'SUPERVISOR' || user?.role === 'ADMIN';
+  // Finance Manager only ever reviews (full cost/margin visibility, same as Supervisor) and
+  // can click Lock & Finalize (CVN creation) - never pricing edits. Every view-only section
+  // below is OR'd with isSupervisor; every pricing-mutation button stays isSupervisor-only,
+  // nested inside the same section rather than gating the whole section on it.
+  const isFinanceManager = user?.role === 'FINANCE_MANAGER' || user?.role === 'ADMIN';
   const isAdmin = user?.role === 'ADMIN';
   // Once locked, pricing is irrevocable for everyone except Admin/Supervisor (emergency
   // escape hatch) - every price-mutating button in this page is gated on this, matching
@@ -681,6 +687,22 @@ export function QuoteDetailPage() {
     }
   }
 
+  async function handlePurchaseOrderUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setUploadingPO(true);
+    setError(null);
+    try {
+      await uploadFile(`/quotes/${quote!.id}/purchase-order`, file);
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setUploadingPO(false);
+    }
+  }
+
   async function applyLineMarginOverride(lineId: number) {
     if (marginInputPct === '') return;
     try {
@@ -863,7 +885,7 @@ export function QuoteDetailPage() {
               Mark as sent to customer
             </button>
           )}
-          {isSupervisor && (quote.status === 'SENT' || quote.status === 'CONVERTED_TO_ORDER') && !quote.locked && (
+          {(isSupervisor || isFinanceManager) && (quote.status === 'SENT' || quote.status === 'CONVERTED_TO_ORDER') && !quote.locked && (
             <button className="btn primary" onClick={lockQuote} title="Generates a permanent Cost Verification Number (CVN) and freezes pricing for good">
               Lock &amp; Finalize
             </button>
@@ -890,7 +912,7 @@ export function QuoteDetailPage() {
           <button className="btn" onClick={() => openBinary(`/quotes/${quote.id}/xlsx`, `${quote.quoteNo}.xlsx`)}>
             Download Excel
           </button>
-          {isSupervisor && (
+          {(isSupervisor || isFinanceManager) && (
             <button
               className="btn"
               onClick={() => openBinary(`/quotes/${quote.id}/xlsx-detailed`, `${quote.quoteNo}-detailed.xlsx`)}
@@ -929,6 +951,36 @@ export function QuoteDetailPage() {
         </Alert>
       ))}
       {quote.remarks && <Alert type={quote.status === 'REJECTED' ? 'error' : 'success'}>Remarks: {quote.remarks}</Alert>}
+
+      {(quote.status === 'SENT' || quote.status === 'CONVERTED_TO_ORDER' || quote.locked) && (
+        <div className="panel" style={{ marginBottom: 14 }}>
+          <h4 style={{ margin: '0 0 8px' }}>Purchase Order</h4>
+          {quote.purchaseOrderFileName ? (
+            <p style={{ margin: 0 }}>
+              <button className="btn small" onClick={() => openBinary(`/quotes/${quote.id}/purchase-order`, quote.purchaseOrderFileName!)}>
+                Download {quote.purchaseOrderFileName}
+              </button>
+              <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+                Uploaded by {quote.purchaseOrderUploadedBy?.name}
+                {quote.purchaseOrderUploadedAt && ` on ${new Date(quote.purchaseOrderUploadedAt).toLocaleDateString()}`}
+              </span>
+            </p>
+          ) : (
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+              No Purchase Order on file yet - required before Lock &amp; Finalize can generate the CVN.
+            </p>
+          )}
+          {!quote.locked && ((isOwner && isMerchandiser) || isSupervisor) && (
+            <label
+              className={`btn small${uploadingPO ? ' disabled' : ''}`}
+              style={{ marginTop: 8, cursor: uploadingPO ? 'default' : 'pointer', display: 'inline-block' }}
+            >
+              {uploadingPO ? 'Uploading...' : quote.purchaseOrderFileName ? 'Replace Purchase Order' : 'Upload Purchase Order'}
+              <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={handlePurchaseOrderUpload} disabled={uploadingPO} style={{ display: 'none' }} />
+            </label>
+          )}
+        </div>
+      )}
 
       {quote.locked && (
         <div className="panel" style={{ background: 'var(--blue-light)', borderColor: 'var(--blue)' }}>
@@ -1018,11 +1070,11 @@ export function QuoteDetailPage() {
         </div>
       )}
 
-      {isSupervisor && (
+      {(isSupervisor || isFinanceManager) && (
         <div className="panel">
           <div className="tag-row" style={{ justifyContent: 'space-between' }}>
             <strong>Commercial terms for this quote</strong>
-            {!showTermsEditor && !pricingLocked && (
+            {isSupervisor && !showTermsEditor && !pricingLocked && (
               <button className="btn small" onClick={openTermsEditor}>
                 {[quote.marginPctOverride, quote.commissionPctOverride, quote.wcInterestPctOverride, quote.lcInterestPctOverride].some(
                   (v) => v != null,
@@ -1161,7 +1213,7 @@ export function QuoteDetailPage() {
         </div>
       )}
 
-      {isSupervisor &&
+      {(isSupervisor || isFinanceManager) &&
         quote.lines.length > 0 &&
         (() => {
           const consolidated = consolidatedMargin();
@@ -1214,7 +1266,7 @@ export function QuoteDetailPage() {
         const singleSeg = isSingle ? line.segments[0] : null;
         const singleItem = isSingle ? singleSeg!.items[0] : null;
         const singleLabel = singleSeg?.product?.name || singleSeg?.product?.code || '';
-        const showDetailsButton = !isSingle || isSupervisor;
+        const showDetailsButton = !isSingle || isSupervisor || isFinanceManager;
         // item.qtyKg is "one set's worth" (pieceWeight x qtyPerSet / 1000) - multiplying by
         // qtySets gives the total weight for the full order quantity.
         const lineTotalKg = line.segments.reduce(
@@ -1273,7 +1325,7 @@ export function QuoteDetailPage() {
                 </table>
               )}
 
-              {isSupervisor && (
+              {(isSupervisor || isFinanceManager) && (
                 <>
                   {seg.items.map((item) => {
                     const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
@@ -1367,7 +1419,7 @@ export function QuoteDetailPage() {
                               <td className="right mono">{effectivePrice != null ? `₹${effectivePrice}` : '-'}</td>
                               <td className="right mono">{ov ? `₹${ov.overridePricePerKg} (${ov.reason || 'override'})` : '-'}</td>
                               <td className="right">
-                                {!pricingLocked && (
+                                {isSupervisor && !pricingLocked && (
                                   <button
                                     className="btn small"
                                     onClick={() => {
@@ -1486,7 +1538,7 @@ export function QuoteDetailPage() {
               </tbody>
             </table>
 
-            {isSupervisor && (
+            {(isSupervisor || isFinanceManager) && (
               <div style={{ marginTop: 8 }}>
                 <div className="tag-row" style={{ alignItems: 'center' }}>
                   <span className="muted" style={{ fontSize: 12 }}>
@@ -1497,7 +1549,7 @@ export function QuoteDetailPage() {
                       'using quote/customer default'
                     )}
                   </span>
-                  {!pricingLocked && editMarginForLine !== line.id && (
+                  {isSupervisor && !pricingLocked && editMarginForLine !== line.id && (
                     <button
                       className="btn small"
                       onClick={() => {
@@ -1508,7 +1560,7 @@ export function QuoteDetailPage() {
                       Set margin %
                     </button>
                   )}
-                  {!pricingLocked && line.marginPctOverride != null && (
+                  {isSupervisor && !pricingLocked && line.marginPctOverride != null && (
                     <button className="btn small" onClick={() => clearLineMarginOverride(line.id)}>
                       Clear override
                     </button>
@@ -1535,7 +1587,7 @@ export function QuoteDetailPage() {
               </div>
             )}
 
-            {isSupervisor && line.targetPrice != null && (
+            {(isSupervisor || isFinanceManager) && line.targetPrice != null && (
               <div style={{ marginTop: 8 }}>
                 <table>
                   <tbody>
@@ -1558,7 +1610,7 @@ export function QuoteDetailPage() {
                     </tr>
                   </tbody>
                 </table>
-                {!pricingLocked && (
+                {isSupervisor && !pricingLocked && (
                   <div className="tag-row" style={{ marginTop: 6 }}>
                     <button className="btn small" onClick={() => matchTargetPrice(line.id)}>
                       Match target price

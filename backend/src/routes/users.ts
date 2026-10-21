@@ -8,7 +8,7 @@ export const usersRouter = Router();
 usersRouter.use(requireAuth);
 usersRouter.use(requireRole('ADMIN'));
 
-const ROLES = ['PURCHASE', 'SUPERVISOR', 'MERCHANDISER', 'ADMIN'] as const;
+const ROLES = ['PURCHASE', 'SUPERVISOR', 'MERCHANDISER', 'ADMIN', 'FINANCE_MANAGER'] as const;
 
 function sanitize<T extends { passwordHash: string }>(user: T) {
   const { passwordHash, ...rest } = user;

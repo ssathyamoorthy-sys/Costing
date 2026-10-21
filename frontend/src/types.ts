@@ -1,4 +1,4 @@
-export type Role = 'PURCHASE' | 'SUPERVISOR' | 'MERCHANDISER' | 'ADMIN';
+export type Role = 'PURCHASE' | 'SUPERVISOR' | 'MERCHANDISER' | 'ADMIN' | 'FINANCE_MANAGER';
 
 export interface User {
   id: number;
@@ -269,6 +269,9 @@ export interface Quote {
   lockedAt?: string | null;
   lockedBy?: { name: string } | null;
   finalReferenceNo?: string | null;
+  purchaseOrderFileName?: string | null;
+  purchaseOrderUploadedAt?: string | null;
+  purchaseOrderUploadedBy?: { name: string } | null;
   version: number;
   createdAt: string;
   lines: QuoteLine[];

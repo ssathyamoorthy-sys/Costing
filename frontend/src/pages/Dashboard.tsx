@@ -32,6 +32,11 @@ const BLURBS: Record<string, { title: string; desc: string; links: { to: string;
     desc: 'Build customer quotes: pick a product and customer, enter size/GSM/qty, and get a live costed price in the customer’s own currency.',
     links: [{ to: '/quotes', label: 'Create a new quote' }],
   },
+  FINANCE_MANAGER: {
+    title: 'Finance Manager',
+    desc: 'Review approved quotes (full cost and margin visibility), and lock & finalize a quote to generate its CVN once the Purchase Order is on file.',
+    links: [{ to: '/quotes', label: 'View quotes' }],
+  },
 };
 
 interface Counts {

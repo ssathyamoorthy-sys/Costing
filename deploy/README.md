@@ -43,6 +43,26 @@ to run on the office network only — not exposed to the public internet.
    refuses to start if `JWT_SECRET` is missing or still the dev default,
    instead of silently running with a guessable secret.
 
+   **To also get real emails** (quote submitted → Supervisor, quote approved →
+   the merchandiser and every Finance Manager, rate approvals, price overrides,
+   etc. - every notification the app raises already tries to email, not just
+   show in-app), add five more lines to the same `backend\.env`:
+   ```
+   SMTP_HOST="smtp.office365.com"
+   SMTP_PORT=587
+   SMTP_USER="costing@adwaithlakshmi.in"
+   SMTP_PASS="<the mailbox password, or an app password if 2FA is on>"
+   SMTP_FROM="costing@adwaithlakshmi.in"
+   ```
+   (Gmail works the same way with `smtp.gmail.com` and an
+   [app password](https://support.google.com/accounts/answer/185833) instead of
+   the regular one, since Gmail blocks plain password SMTP login.) Without
+   these five lines, every notification still appears in-app (bell icon +
+   Notifications page) - emails are just silently skipped, logged to the
+   server console as `[mailer] SMTP not configured, skipping email to ...`.
+   Restart the service (`net stop`/`net start`, or just re-run
+   `deploy\redeploy.bat`) after adding them.
+
 5. **Set up the production database:**
    ```
    cd backend

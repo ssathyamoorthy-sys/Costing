@@ -23,7 +23,7 @@ quotesRouter.use(requireAuth);
 // The Set's own costBreakupJson only ever holds { ratePerSet }, which is just the final
 // combined price, so it's safe to leave as-is; only each Item's detailed breakup is stripped.
 function sanitizeItemBreakup(costBreakupJson: string | null, role: string): string | null {
-  if (role === 'SUPERVISOR' || role === 'ADMIN') return costBreakupJson;
+  if (role === 'SUPERVISOR' || role === 'ADMIN' || role === 'FINANCE_MANAGER') return costBreakupJson;
   if (!costBreakupJson) return costBreakupJson;
   const full: CostingBreakup = JSON.parse(costBreakupJson);
   return JSON.stringify({ ratePerKg: full.ratePerKg, ratePerPiece: full.ratePerPiece });
@@ -195,7 +195,9 @@ quotesRouter.get('/', async (req, res) => {
     include: { customer: true, createdBy: { select: { name: true } }, lines: { include: lineFull } },
     orderBy: { createdAt: 'desc' },
   });
-  res.json(quotes.map((q) => ({ ...q, lines: sanitizeLinesForRole(q.lines, req.user!.role) })));
+  // The PO file's bytes have no business being in a list payload - its presence/metadata
+  // (filename, uploadedAt) stays, just not the blob itself.
+  res.json(quotes.map((q) => ({ ...q, purchaseOrderData: undefined, lines: sanitizeLinesForRole(q.lines, req.user!.role) })));
 });
 
 // Dashboard notification counts - cheap counts only (no nested lines/segments/items).
@@ -212,13 +214,15 @@ quotesRouter.get('/:id', async (req, res) => {
       createdBy: { select: { name: true } },
       approvedBy: { select: { name: true } },
       lockedBy: { select: { name: true } },
+      purchaseOrderUploadedBy: { select: { name: true } },
       lines: { include: lineFull },
     },
   });
   if (!quote) return res.status(404).json({ error: 'Not found' });
   const visErr = visibilityError(quote, req.user!);
   if (visErr) return res.status(visErr.status).json({ error: visErr.error });
-  res.json({ ...quote, lines: sanitizeLinesForRole(quote.lines, req.user!.role) });
+  // Same reasoning as the list endpoint above - metadata only, never the blob itself.
+  res.json({ ...quote, purchaseOrderData: undefined, lines: sanitizeLinesForRole(quote.lines, req.user!.role) });
 });
 
 quotesRouter.get('/:id/xlsx', async (req, res) => {
@@ -313,7 +317,7 @@ quotesRouter.get('/:id/pdf', async (req, res) => {
 // Supervisor/Admin only: the full cost build-up as live Excel formulas, one sheet per
 // item (mirrors "Price Working.xlsx") - this is the one export that exposes the
 // underlying cost stack, so it stays out of the Merchandiser-facing PDF/summary xlsx.
-quotesRouter.get('/:id/xlsx-detailed', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+quotesRouter.get('/:id/xlsx-detailed', requireRole('SUPERVISOR', 'FINANCE_MANAGER', 'ADMIN'), async (req, res) => {
   const quote = await prisma.quote.findUnique({ where: { id: Number(req.params.id) }, select: { quoteNo: true } });
   if (!quote) return res.status(404).json({ error: 'Not found' });
 
@@ -1338,6 +1342,7 @@ quotesRouter.post('/:id/approve', requireRole('SUPERVISOR', 'ADMIN'), async (req
     data: { status: 'APPROVED', approvedById: req.user!.userId, approvedAt: new Date(), quoteNo, remarks: req.body?.remarks },
   });
   await notifyUser(quote.createdById, 'Quote approved', `Quote #${quoteNo} was approved.`);
+  await notifyRole('FINANCE_MANAGER', 'Quote approved', `Quote #${quoteNo} was approved and is pending conversion to order / CVN.`);
   res.json(updated);
 });
 
@@ -1368,13 +1373,66 @@ quotesRouter.post('/:id/mark-sent', requireRole('MERCHANDISER', 'SUPERVISOR', 'A
 // finalReferenceNo (quoteNo itself keeps working through every negotiation round) and
 // freezes every price-mutating action from here on (see assertNotLocked above; Admin can
 // still bypass it as an emergency escape hatch).
-quotesRouter.post('/:id/lock', requireRole('SUPERVISOR', 'ADMIN'), async (req, res) => {
+// Merchandiser (owner) / Supervisor / Admin: attach the customer's Purchase Order once the
+// enquiry is converted to an order. One file per quote - re-uploading overwrites it. Required
+// before "Lock & Finalize" can generate the CVN (enforced there, not here).
+quotesRouter.post('/:id/purchase-order', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), upload.single('file'), async (req, res) => {
+  const quoteId = Number(req.params.id);
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded (field name must be "file")' });
+
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+  const isSupervisor = req.user!.role === 'SUPERVISOR' || req.user!.role === 'ADMIN';
+  if (quote.createdById !== req.user!.userId && !isSupervisor) {
+    return res.status(403).json({ error: 'Not your quote' });
+  }
+  if (quote.locked) {
+    return res.status(409).json({ error: 'This quote is already locked - the Purchase Order can no longer be changed' });
+  }
+
+  const updated = await prisma.quote.update({
+    where: { id: quoteId },
+    data: {
+      purchaseOrderFileName: req.file.originalname,
+      purchaseOrderMimeType: req.file.mimetype,
+      purchaseOrderData: req.file.buffer,
+      purchaseOrderUploadedAt: new Date(),
+      purchaseOrderUploadedById: req.user!.userId,
+    },
+    include: { purchaseOrderUploadedBy: { select: { name: true } } },
+  });
+  res.status(201).json({
+    purchaseOrderFileName: updated.purchaseOrderFileName,
+    purchaseOrderUploadedAt: updated.purchaseOrderUploadedAt,
+    purchaseOrderUploadedBy: updated.purchaseOrderUploadedBy?.name ?? null,
+  });
+});
+
+// Anyone who can see this quote (see visibilityError) can download its Purchase Order - that
+// includes Finance Manager, who needs it to review before Lock & Finalize.
+quotesRouter.get('/:id/purchase-order', async (req, res) => {
+  const quoteId = Number(req.params.id);
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+  const visErr = visibilityError(quote, req.user!);
+  if (visErr) return res.status(visErr.status).json({ error: visErr.error });
+  if (!quote.purchaseOrderData) return res.status(404).json({ error: 'No Purchase Order on file for this quote' });
+
+  res.setHeader('Content-Type', quote.purchaseOrderMimeType || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${quote.purchaseOrderFileName || 'purchase-order'}"`);
+  res.send(quote.purchaseOrderData);
+});
+
+quotesRouter.post('/:id/lock', requireRole('SUPERVISOR', 'FINANCE_MANAGER', 'ADMIN'), async (req, res) => {
   const quoteId = Number(req.params.id);
   const quote = await prisma.quote.findUnique({ where: { id: quoteId } });
   if (!quote) return res.status(404).json({ error: 'Not found' });
   if (quote.locked) return res.status(409).json({ error: 'Quote is already locked' });
   if (!['SENT', 'CONVERTED_TO_ORDER'].includes(quote.status)) {
     return res.status(409).json({ error: 'Only a quote that has been sent to the customer (or converted to an order) can be locked' });
+  }
+  if (!quote.purchaseOrderData) {
+    return res.status(422).json({ error: 'Upload the Purchase Order before locking & finalizing this quote.' });
   }
 
   // One last snapshot capturing the price exactly as it stood the moment before lock.

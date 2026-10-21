@@ -5,8 +5,8 @@ import { api } from '../api';
 import type { Notification, Role } from '../types';
 
 const NAV: { to: string; label: string; roles: Role[] }[] = [
-  { to: '/', label: 'Dashboard', roles: ['ADMIN', 'SUPERVISOR', 'PURCHASE', 'MERCHANDISER'] },
-  { to: '/quotes', label: 'Quotes', roles: ['ADMIN', 'SUPERVISOR', 'MERCHANDISER'] },
+  { to: '/', label: 'Dashboard', roles: ['ADMIN', 'SUPERVISOR', 'PURCHASE', 'MERCHANDISER', 'FINANCE_MANAGER'] },
+  { to: '/quotes', label: 'Quotes', roles: ['ADMIN', 'SUPERVISOR', 'MERCHANDISER', 'FINANCE_MANAGER'] },
   { to: '/templates', label: 'Quote Templates', roles: ['ADMIN', 'SUPERVISOR', 'MERCHANDISER'] },
   { to: '/raw-materials', label: 'Raw Material Master', roles: ['ADMIN', 'SUPERVISOR', 'PURCHASE'] },
   { to: '/products', label: 'Product Master', roles: ['ADMIN', 'SUPERVISOR'] },
@@ -19,7 +19,7 @@ const NAV: { to: string; label: string; roles: Role[] }[] = [
   { to: '/general-settings', label: 'General Mapping', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/users', label: 'User Rights', roles: ['ADMIN'] },
   { to: '/reports', label: 'Reports', roles: ['ADMIN', 'SUPERVISOR'] },
-  { to: '/notifications', label: 'Notifications', roles: ['ADMIN', 'SUPERVISOR', 'PURCHASE', 'MERCHANDISER'] },
+  { to: '/notifications', label: 'Notifications', roles: ['ADMIN', 'SUPERVISOR', 'PURCHASE', 'MERCHANDISER', 'FINANCE_MANAGER'] },
 ];
 
 export function Layout() {

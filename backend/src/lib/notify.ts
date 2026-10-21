@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
 import { sendMail } from './mailer';
+import type { Role } from './auth';
 
 export async function notifyUser(userId: number, type: string, message: string) {
   const notification = await prisma.notification.create({
@@ -16,7 +17,7 @@ export async function notifyUser(userId: number, type: string, message: string) 
   return notification;
 }
 
-export async function notifyRole(role: 'PURCHASE' | 'SUPERVISOR' | 'MERCHANDISER' | 'ADMIN', type: string, message: string) {
+export async function notifyRole(role: Role, type: string, message: string) {
   const users = await prisma.user.findMany({ where: { role, active: true } });
   await Promise.all(users.map((u) => notifyUser(u.id, type, message)));
 }

@@ -10,7 +10,7 @@ datasource db {
 // SQLite has no native enum support in Prisma, so these are plain strings.
 // Allowed values are enforced in the application layer (see src/lib/auth.ts,
 // src/lib/rates.ts, src/routes/quotes.ts):
-//   Role:        PURCHASE | SUPERVISOR | MERCHANDISER | ADMIN
+//   Role:        PURCHASE | SUPERVISOR | MERCHANDISER | ADMIN | FINANCE_MANAGER
 //   RateStatus:  PENDING | APPROVED | REJECTED
 //   QuoteStatus: DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | SENT | WON | LOST
 
@@ -31,6 +31,7 @@ model User {
   createdQuotes      Quote[]                     @relation("CreatedQuotes")
   approvedQuotes      Quote[]                    @relation("ApprovedQuotes")
   lockedQuotes        Quote[]                    @relation("LockedQuotes")
+  uploadedPurchaseOrders Quote[]                 @relation("UploadedPurchaseOrders")
   quoteRevisions      QuoteRevision[]
   notifications      Notification[]
   quoteTemplates     QuoteTemplate[]
@@ -262,6 +263,17 @@ model Quote {
   lockedById       Int?
   lockedBy         User?     @relation("LockedQuotes", fields: [lockedById], references: [id])
   finalReferenceNo String?   @unique
+
+  // The customer's Purchase Order, attachable once the enquiry is "Converted to Order" -
+  // required (enforced in routes/quotes.ts) before "Lock & Finalize" can generate the CVN.
+  // One file per quote, stored inline in the SQLite file itself (not a separate uploads\
+  // folder) so it rides along with the existing backup/snapshot scripts automatically.
+  purchaseOrderFileName     String?
+  purchaseOrderMimeType     String?
+  purchaseOrderData         Bytes?
+  purchaseOrderUploadedAt   DateTime?
+  purchaseOrderUploadedById Int?
+  purchaseOrderUploadedBy   User?     @relation("UploadedPurchaseOrders", fields: [purchaseOrderUploadedById], references: [id])
 
   version       Int         @default(1)
   createdAt     DateTime    @default(now())

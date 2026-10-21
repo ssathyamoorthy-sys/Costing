@@ -18,6 +18,7 @@ async function main() {
   const supervisor = await upsertUser('supervisor', 'Supervisor', 'SUPERVISOR', 'ChangeMe123!');
   const purchase = await upsertUser('purchase', 'Purchase User', 'PURCHASE', 'ChangeMe123!');
   const merchandiser = await upsertUser('merchandiser', 'Merchandiser', 'MERCHANDISER', 'ChangeMe123!');
+  const financeManager = await upsertUser('financemanager', 'Finance Manager', 'FINANCE_MANAGER', 'ChangeMe123!');
 
   console.log('Seeding item types (stitching/packing cost per kg)...');
   const itemTypeDefs = [
@@ -226,6 +227,7 @@ async function main() {
   console.log('  supervisor / ChangeMe123!');
   console.log('  purchase / ChangeMe123!');
   console.log('  merchandiser / ChangeMe123!');
+  console.log('  financemanager / ChangeMe123!');
   console.log('CHANGE THESE PASSWORDS after first login.');
 }
 
