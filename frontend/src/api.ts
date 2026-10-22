@@ -1,3 +1,5 @@
+import type { ExtractionResult } from './types';
+
 const TOKEN_KEY = 'ttc_token';
 
 export function getToken(): string | null {
@@ -61,6 +63,25 @@ export async function uploadFile<T>(path: string, file: File): Promise<T> {
   const data = text ? JSON.parse(text) : undefined;
   if (!res.ok) throw new ApiError(res.status, data);
   return data as T;
+}
+
+/** Uploads a screenshot/Excel/CSV file, or pasted email text, for AI-assisted quote extraction.
+ * `quoteId` scopes the extraction to an existing quote (customer already fixed, skipped). */
+export async function aiExtractQuote(input: { file?: File; emailText?: string; quoteId?: number }): Promise<ExtractionResult> {
+  const token = getToken();
+  const form = new FormData();
+  if (input.file) form.append('file', input.file);
+  if (input.emailText) form.append('emailText', input.emailText);
+  if (input.quoteId) form.append('quoteId', String(input.quoteId));
+  const res = await fetch('/api/quotes/ai-extract', {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: form,
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : undefined;
+  if (!res.ok) throw new ApiError(res.status, data);
+  return data as ExtractionResult;
 }
 
 /** Opens a binary GET endpoint (PDF/xlsx) in a new tab, carrying the auth token via a short-lived blob URL. */

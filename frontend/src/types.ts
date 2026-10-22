@@ -339,3 +339,32 @@ export interface Notification {
   emailSent: boolean;
   createdAt: string;
 }
+
+// AI-assisted quote extraction (screenshot/Excel/pasted email -> best-effort quote draft).
+// matchedId is set only when the AI is confident it's an existing master-data record;
+// otherwise it's null and guessedText carries the raw reading for the merchandiser to review.
+export type AiConfidence = 'high' | 'low' | 'none';
+export interface AiMatchRef {
+  matchedId: number | null;
+  guessedText: string;
+  confidence: AiConfidence;
+}
+export interface ExtractionResult {
+  customer: AiMatchRef | null;
+  color: string | null;
+  qtySets: number | null;
+  targetPrice: number | null;
+  segments: {
+    product: AiMatchRef;
+    yarnComponents: { slot: string; rawMaterial: AiMatchRef; mixingPct: number | null }[];
+    items: {
+      itemType: AiMatchRef;
+      lengthCm: number | null;
+      widthCm: number | null;
+      gsm: number | null;
+      qtyPerSet: number | null;
+      hsnCode: AiMatchRef;
+    }[];
+  }[];
+  warnings: string[];
+}

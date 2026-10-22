@@ -63,6 +63,20 @@ to run on the office network only — not exposed to the public internet.
    Restart the service (`net stop`/`net start`, or just re-run
    `deploy\redeploy.bat`) after adding them.
 
+   **To enable AI-assisted quote creation** (merchandisers can upload a
+   screenshot/Excel file/pasted email and get a quote form pre-filled by
+   Claude), add one line to the same `backend\.env`:
+   ```
+   ANTHROPIC_API_KEY="sk-ant-..."
+   ```
+   Get a key from console.anthropic.com. Each extraction call costs a small
+   fraction of a cent to a few cents depending on input size (an image costs
+   more than plain text) - negligible at normal merchandiser usage volumes.
+   Without this line, the feature is simply unavailable: the "✨ Create from
+   file/email" button still shows, but clicking it returns a clear "AI
+   extraction isn't configured" message instead of failing - nothing else in
+   the app is affected. Restart the service after adding it, same as above.
+
 5. **Set up the production database:**
    ```
    cd backend

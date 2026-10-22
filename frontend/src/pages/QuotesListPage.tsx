@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api';
-import type { Customer, Quote } from '../types';
+import type { Customer, ExtractionResult, Quote } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
+import { AiExtractModal } from '../components/AiExtractModal';
 
 function statusLabel(status: string) {
   switch (status) {
@@ -51,6 +52,8 @@ export function QuotesListPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerId, setCustomerId] = useState<number | ''>('');
   const [customerEnquiryNo, setCustomerEnquiryNo] = useState('');
+  const [showAiExtract, setShowAiExtract] = useState(false);
+  const [pendingAiExtraction, setPendingAiExtraction] = useState<ExtractionResult | null>(null);
 
   function load() {
     api.get<Quote[]>('/quotes').then(setQuotes).catch((e) => setError(e.message));
@@ -60,6 +63,17 @@ export function QuotesListPage() {
   function openNew() {
     api.get<Customer[]>('/customers').then(setCustomers);
     setCustomerEnquiryNo('');
+    setPendingAiExtraction(null);
+    setCustomerId('');
+    setShowNew(true);
+  }
+
+  function handleAiExtracted(result: ExtractionResult) {
+    setShowAiExtract(false);
+    setPendingAiExtraction(result);
+    api.get<Customer[]>('/customers').then(setCustomers);
+    setCustomerEnquiryNo('');
+    setCustomerId(result.customer?.matchedId ?? '');
     setShowNew(true);
   }
 
@@ -67,7 +81,7 @@ export function QuotesListPage() {
     if (!customerId) return;
     try {
       const q = await api.post<Quote>('/quotes', { customerId, customerEnquiryNo: customerEnquiryNo || undefined });
-      navigate(`/quotes/${q.id}`);
+      navigate(`/quotes/${q.id}`, { state: pendingAiExtraction ? { aiExtraction: pendingAiExtraction } : undefined });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     }
@@ -80,9 +94,14 @@ export function QuotesListPage() {
       <div className="toolbar">
         <h2>Quotes</h2>
         {canCreate && (
-          <button className="btn primary" onClick={openNew}>
-            + New quote
-          </button>
+          <div className="tag-row">
+            <button className="btn" onClick={() => setShowAiExtract(true)}>
+              ✨ Create from file / email
+            </button>
+            <button className="btn primary" onClick={openNew}>
+              + New quote
+            </button>
+          </div>
         )}
       </div>
       {error && <Alert type="error">{error}</Alert>}
@@ -154,9 +173,21 @@ export function QuotesListPage() {
                 (set in the Customer Master).
               </p>
             )}
+            {pendingAiExtraction && !customerId && (
+              <p className="muted" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                AI read customer: "{pendingAiExtraction.customer?.guessedText || 'unknown'}" - no match found, please
+                pick the closest one above.
+              </p>
+            )}
           </div>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setShowNew(false)}>
+            <button
+              className="btn"
+              onClick={() => {
+                setShowNew(false);
+                setPendingAiExtraction(null);
+              }}
+            >
               Cancel
             </button>
             <button className="btn primary" onClick={createQuote} disabled={!customerId}>
@@ -165,6 +196,8 @@ export function QuotesListPage() {
           </div>
         </Modal>
       )}
+
+      {showAiExtract && <AiExtractModal onClose={() => setShowAiExtract(false)} onExtracted={handleAiExtracted} />}
     </div>
   );
 }

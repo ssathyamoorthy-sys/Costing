@@ -1,8 +1,10 @@
 import { Fragment, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, openBinary, uploadFile } from '../api';
 import type {
+  AiMatchRef,
   CostingBreakup,
+  ExtractionResult,
   HsnCode,
   ItemType,
   Product,
@@ -18,6 +20,15 @@ import type {
 } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
+import { AiExtractModal } from '../components/AiExtractModal';
+
+// Shows a small "AI guessed X" hint only when the AI couldn't confidently match an existing
+// master-data record (matchedId is null) - once a real id is matched, the select is already
+// pre-filled with it and no hint is needed.
+function aiHint(ref?: AiMatchRef | null): string | null {
+  if (!ref || ref.matchedId != null || !ref.guessedText) return null;
+  return `AI read: "${ref.guessedText}"`;
+}
 
 const CURRENCY_SYMBOL: Record<string, string> = { INR: '₹', USD: '$', GBP: '£', EUR: '€' };
 
@@ -137,6 +148,7 @@ function emptySetForm(): SetForm {
 export function QuoteDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const [quote, setQuote] = useState<Quote | null>(null);
   const [revisions, setRevisions] = useState<QuoteRevision[]>([]);
@@ -177,6 +189,9 @@ export function QuoteDetailPage() {
   const [editingEnquiryNo, setEditingEnquiryNo] = useState(false);
   const [enquiryNoInput, setEnquiryNoInput] = useState('');
 
+  const [aiHints, setAiHints] = useState<ExtractionResult | null>(null);
+  const [showAiExtractForNewSet, setShowAiExtractForNewSet] = useState(false);
+
   function load() {
     api
       .get<Quote>(`/quotes/${id}`)
@@ -207,6 +222,18 @@ export function QuoteDetailPage() {
     api.get<QuoteTemplateSummary[]>(`/quote-templates?customerId=${quote.customerId}`).then(setTemplates);
     api.get<QuoteTemplateGroupSummary[]>(`/quote-template-groups?customerId=${quote.customerId}`).then(setTemplateGroups);
   }, [quote?.customerId]);
+  // Arriving here right after "Create from file/email" on the quotes list - the extraction
+  // result rides along as router state. Pre-fill the new-set form with it once, then replace
+  // the history entry so a refresh/back-nav doesn't re-trigger it (location.state is then
+  // undefined, which naturally stops this effect from firing again).
+  useEffect(() => {
+    const state = location.state as { aiExtraction?: ExtractionResult } | null;
+    if (state?.aiExtraction) {
+      prefillFromAiExtraction(state.aiExtraction);
+      navigate(location.pathname, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   if (!quote) return error ? <Alert type="error">{error}</Alert> : <p className="muted">Loading...</p>;
 
@@ -240,6 +267,7 @@ export function QuoteDetailPage() {
     setMode('single');
     setShowYarnEditorSingle(false);
     setSelectedTemplateId('');
+    setAiHints(null);
     setShowForm(true);
   }
 
@@ -267,6 +295,48 @@ export function QuoteDetailPage() {
     setMode(isSingleLine(line.segments) ? 'single' : 'bundle');
     setShowYarnEditorSingle(false);
     setSelectedTemplateId('');
+    setAiHints(null);
+    setShowForm(true);
+  }
+
+  // Builds a SetForm from an AI extraction result, the same way loadTemplate() builds one from
+  // a saved recipe - matchedId becomes the real form id when the AI was confident, otherwise
+  // the field is left blank and its guess is surfaced via aiHints for the merchandiser to
+  // resolve manually. Nothing here is saved - it only opens the normal, unmodified set form.
+  function prefillFromAiExtraction(result: ExtractionResult) {
+    setEditingLineId(null);
+    const segments = result.segments.length
+      ? result.segments.map((seg) => ({
+          productId: seg.product.matchedId ?? ('' as number | ''),
+          yarnComponents: seg.yarnComponents.map((y) => ({
+            slot: y.slot,
+            rawMaterialId: y.rawMaterial.matchedId ?? ('' as number | ''),
+            mixingPct: y.mixingPct ?? 0,
+            dyeingCostPerKg: 0,
+          })),
+          items: seg.items.map((it) => ({
+            itemTypeId: it.itemType.matchedId ?? ('' as number | ''),
+            lengthCm: it.lengthCm != null ? String(it.lengthCm) : '',
+            widthCm: it.widthCm != null ? String(it.widthCm) : '',
+            fabricConsumptionSqm: '',
+            gsm: it.gsm != null ? String(it.gsm) : '',
+            qtyPerSet: it.qtyPerSet != null ? String(it.qtyPerSet) : '1',
+            hsnCodeId: it.hsnCode.matchedId ?? ('' as number | ''),
+            packagingCharges: [],
+          })),
+        }))
+      : [emptySegment()];
+    setForm({
+      color: result.color ?? '',
+      qtySets: result.qtySets != null ? String(result.qtySets) : '1',
+      targetPrice: result.targetPrice != null ? String(result.targetPrice) : '',
+      segments,
+    });
+    const single = segments.length === 1 && segments[0].items.length === 1 && segments[0].items[0].qtyPerSet === '1';
+    setMode(single ? 'single' : 'bundle');
+    setShowYarnEditorSingle(true); // AI-filled yarn always needs a look, even in single mode
+    setSelectedTemplateId('');
+    setAiHints(result);
     setShowForm(true);
   }
 
@@ -312,6 +382,7 @@ export function QuoteDetailPage() {
     });
     setMode(isSingleLine(template.segments) ? 'single' : 'bundle');
     setShowYarnEditorSingle(false);
+    setAiHints(null);
   }
 
   async function saveLineAsTemplate(lineId: number) {
@@ -412,6 +483,7 @@ export function QuoteDetailPage() {
   function cancelForm() {
     setShowForm(false);
     setEditingLineId(null);
+    setAiHints(null);
   }
 
   function addSegment() {
@@ -553,6 +625,7 @@ export function QuoteDetailPage() {
       setShowForm(false);
       setEditingLineId(null);
       setForm(emptySetForm());
+      setAiHints(null);
       load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -1632,6 +1705,9 @@ export function QuoteDetailPage() {
           <button className="btn primary" onClick={startNewSet}>
             + Add set
           </button>
+          <button className="btn" onClick={() => setShowAiExtractForNewSet(true)}>
+            ✨ AI-fill new set
+          </button>
           {templateGroups.length > 0 && (
             <select
               value={selectedGroupId}
@@ -1652,6 +1728,20 @@ export function QuoteDetailPage() {
       {canEditLines && showForm && (
         <div className="panel">
           <h3 style={{ marginTop: 0 }}>{editingLineId ? 'Edit set' : 'New set'}</h3>
+
+          {aiHints && (
+            <Alert type="success">
+              AI pre-filled this set from your upload - please review the fields below (unmatched ones show the
+              AI's raw guess) before saving.
+              {aiHints.warnings.length > 0 && (
+                <ul style={{ margin: '6px 0 0 18px' }}>
+                  {aiHints.warnings.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              )}
+            </Alert>
+          )}
 
           {!editingLineId && templates.length > 0 && (
             <div className="field" style={{ maxWidth: 360, marginBottom: 12 }}>
@@ -1737,6 +1827,11 @@ export function QuoteDetailPage() {
                     </option>
                   ))}
                 </select>
+                {aiHint(aiHints?.segments[segIdx]?.product) && (
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    {aiHint(aiHints?.segments[segIdx]?.product)}
+                  </span>
+                )}
               </div>
 
               {mode === 'bundle' || showYarnEditorSingle ? (
@@ -1779,6 +1874,11 @@ export function QuoteDetailPage() {
                                 </option>
                               ))}
                             </select>
+                            {aiHint(aiHints?.segments[segIdx]?.yarnComponents[rowIdx]?.rawMaterial) && (
+                              <div className="muted" style={{ fontSize: 11 }}>
+                                {aiHint(aiHints?.segments[segIdx]?.yarnComponents[rowIdx]?.rawMaterial)}
+                              </div>
+                            )}
                           </td>
                           <td className="right">
                             <input
@@ -1842,6 +1942,11 @@ export function QuoteDetailPage() {
                             </option>
                           ))}
                         </select>
+                        {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.itemType) && (
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.itemType)}
+                          </span>
+                        )}
                       </div>
                       {itemTypes.find((t) => t.id === item.itemTypeId)?.sizingMethod === 'FABRIC_CONSUMPTION' ? (
                         <div className="field">
@@ -1881,6 +1986,11 @@ export function QuoteDetailPage() {
                             </option>
                           ))}
                         </select>
+                        {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.hsnCode) && (
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.hsnCode)}
+                          </span>
+                        )}
                       </div>
                       {mode === 'bundle' && (
                         <div className="field">
@@ -1951,6 +2061,17 @@ export function QuoteDetailPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {showAiExtractForNewSet && (
+        <AiExtractModal
+          quoteId={quote.id}
+          onClose={() => setShowAiExtractForNewSet(false)}
+          onExtracted={(result) => {
+            setShowAiExtractForNewSet(false);
+            prefillFromAiExtraction(result);
+          }}
+        />
       )}
     </div>
   );

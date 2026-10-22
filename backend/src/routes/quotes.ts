@@ -8,10 +8,12 @@ import { computeSet, type SegmentInput } from '../costing/computeSet';
 import { resolveCurrentRate } from '../lib/rates';
 import { notifyRole, notifyUser } from '../lib/notify';
 import { generateQuotePdf } from '../pdf/quotePdf';
-import { buildWorkbook } from '../xlsx/helpers';
+import { buildWorkbook, dumpWorkbookAsText } from '../xlsx/helpers';
 import { buildDetailedQuoteWorkbook } from '../xlsx/buildDetailedQuoteWorkbook';
 import { parseCostSheetWorkbook } from '../xlsx/importCostSheet';
 import type { CostingBreakup } from '../costing/engine';
+import Anthropic from '@anthropic-ai/sdk';
+import { extractQuoteFromInput, AiExtractNotConfiguredError, type MasterDataContext } from '../lib/aiExtract';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -708,6 +710,64 @@ quotesRouter.post('/', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async
     },
   });
   res.status(201).json(quote);
+});
+
+async function loadMasterDataContext(includeCustomers: boolean): Promise<MasterDataContext> {
+  const [customers, products, rawMaterials, itemTypes, hsnCodes] = await Promise.all([
+    includeCustomers ? prisma.customer.findMany({ select: { id: true, name: true } }) : Promise.resolve(undefined),
+    prisma.product.findMany({ select: { id: true, code: true, name: true } }),
+    prisma.rawMaterial.findMany({ select: { id: true, code: true, description: true } }),
+    prisma.itemType.findMany({ select: { id: true, name: true } }),
+    prisma.hsnCode.findMany({ select: { id: true, hsCode: true, description: true } }),
+  ]);
+  return { customers, products, rawMaterials, itemTypes, hsnCodes };
+}
+
+// AI-assisted extraction: reads an uploaded screenshot/Excel/CSV file or pasted email text and
+// proposes a best-effort quote draft (customer/product/yarn/item matches against existing
+// master data, or a raw guess when nothing matches confidently). This never touches the
+// database - the file is processed in memory and discarded. The frontend pre-fills the normal
+// quote line form with the result for the merchandiser to review and correct before anything is
+// saved through the existing POST /:id/lines -> computeSet() path.
+quotesRouter.post('/ai-extract', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), upload.single('file'), async (req, res) => {
+  const emailText = typeof req.body.emailText === 'string' ? req.body.emailText.trim() : '';
+  if (!req.file && !emailText) return res.status(400).json({ error: 'Upload a file or paste some text to extract from' });
+
+  const quoteId = req.body.quoteId ? Number(req.body.quoteId) : undefined;
+  const master = await loadMasterDataContext(!quoteId);
+
+  let input: Parameters<typeof extractQuoteFromInput>[0];
+  if (req.file) {
+    if (req.file.mimetype.startsWith('image/')) {
+      input = { kind: 'image', base64: req.file.buffer.toString('base64'), mediaType: req.file.mimetype };
+    } else if (/\.csv$/i.test(req.file.originalname)) {
+      input = { kind: 'text', text: req.file.buffer.toString('utf-8'), sourceLabel: 'uploaded spreadsheet' };
+    } else if (/sheet|excel/.test(req.file.mimetype) || /\.(xlsx|xls)$/i.test(req.file.originalname)) {
+      input = { kind: 'text', text: await dumpWorkbookAsText(req.file.buffer), sourceLabel: 'uploaded spreadsheet' };
+    } else {
+      return res.status(400).json({ error: 'Unsupported file type - upload an image or an Excel/CSV file' });
+    }
+  } else {
+    input = { kind: 'text', text: emailText, sourceLabel: 'pasted email/WhatsApp text' };
+  }
+
+  try {
+    const result = await extractQuoteFromInput(input, master);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof AiExtractNotConfiguredError) {
+      return res.status(503).json({ error: "AI extraction isn't configured - contact your administrator (ANTHROPIC_API_KEY missing)." });
+    }
+    if (err instanceof Anthropic.RateLimitError) return res.status(429).json({ error: 'AI service is busy - try again in a moment.' });
+    if (err instanceof Anthropic.APIConnectionError) return res.status(504).json({ error: 'AI service timed out - try again, or enter the quote manually.' });
+    if (err instanceof Anthropic.AuthenticationError) {
+      console.error('[aiExtract] invalid ANTHROPIC_API_KEY', err);
+      return res.status(500).json({ error: 'AI extraction is misconfigured - contact your administrator.' });
+    }
+    if (err instanceof Anthropic.APIError) return res.status(502).json({ error: 'AI extraction failed - try again, or enter the quote manually.' });
+    console.error('[aiExtract]', err);
+    return res.status(422).json({ error: "AI couldn't produce a usable extraction from this input - try a clearer file, or enter the quote manually." });
+  }
 });
 
 // Owner (while still DRAFT) or Supervisor/Admin: edit purely informational quote metadata -
