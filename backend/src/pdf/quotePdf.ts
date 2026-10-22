@@ -80,12 +80,32 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   doc.fillColor('black');
 
   doc.font('Helvetica').fontSize(9);
-  doc.text(`Quote No: ${quote.quoteNo}`, 40, 112);
-  doc.text(`Date: ${quote.createdAt.toLocaleDateString()}`, 40, 126);
-  if (quote.customerEnquiryNo) doc.text(`Customer Enquiry No: ${quote.customerEnquiryNo}`, 40, 140);
-  doc.text(`Customer: ${quote.customer.name}`, 300, 112);
-  doc.text(`Currency: ${currency}`, 300, 140);
-  if (quote.validityDate) doc.text(`Valid until: ${quote.validityDate.toLocaleDateString()}`, 300, 126);
+  // Two fixed columns (left: 40-280, right: 300-555, with a gap between) - each field is drawn
+  // with an explicit width so a long value (e.g. a customer's RFQ/enquiry number) wraps onto a
+  // second line within its own column instead of overrunning into the column next to it. Row
+  // height is measured from the actual wrapped text (doc.heightOfString) rather than assumed to
+  // be one line, so a wrapped left field pushes the following row (and the table below) down
+  // instead of being overlapped by it.
+  const LEFT_COL_X = 40;
+  const LEFT_COL_WIDTH = 240;
+  const RIGHT_COL_X = 300;
+  const RIGHT_COL_WIDTH = 255;
+  let headerY = 112;
+  function headerRow(left: string | null, right: string | null) {
+    let rowHeight = 12;
+    if (left) {
+      doc.text(left, LEFT_COL_X, headerY, { width: LEFT_COL_WIDTH });
+      rowHeight = Math.max(rowHeight, doc.heightOfString(left, { width: LEFT_COL_WIDTH }));
+    }
+    if (right) {
+      doc.text(right, RIGHT_COL_X, headerY, { width: RIGHT_COL_WIDTH });
+      rowHeight = Math.max(rowHeight, doc.heightOfString(right, { width: RIGHT_COL_WIDTH }));
+    }
+    headerY += rowHeight + 2;
+  }
+  headerRow(`Quote No: ${quote.quoteNo}`, `Customer: ${quote.customer.name}`);
+  headerRow(`Date: ${quote.createdAt.toLocaleDateString()}`, quote.validityDate ? `Valid until: ${quote.validityDate.toLocaleDateString()}` : null);
+  headerRow(quote.customerEnquiryNo ? `Customer Enquiry No: ${quote.customerEnquiryNo}` : null, `Currency: ${currency}`);
 
   // One flat table across every item in every Set - no per-Set grouping - with a
   // grand-total footer row.
@@ -103,7 +123,7 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   ];
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
 
-  let y = 160;
+  let y = headerY + 14;
   const pageBottom = 760;
   function ensureRoom(rowHeight: number) {
     if (y + rowHeight > pageBottom) {
