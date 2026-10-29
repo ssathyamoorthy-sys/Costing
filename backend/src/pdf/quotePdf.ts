@@ -22,7 +22,7 @@ interface QuoteForPdf {
     costBreakupJson: string | null;
     segments: {
       product: { code: string; name: string | null };
-      yarnComponents: { slot: string; rawMaterial: { code: string; description: string | null } }[];
+      yarnComponents: { slot: string; mixingPct: number; rawMaterial: { code: string; description: string | null } }[];
       items: {
         itemType: { name: string };
         lengthCm: number;
@@ -39,9 +39,10 @@ interface QuoteForPdf {
 // The Pile slot carries the towel's loop/terry yarn - the one yarn spec a customer actually
 // cares about on a price list, so it's shown by its master description (e.g. "16s Ring Spun
 // Combed") rather than the internal code, falling back to the code if no description is set.
-function pileYarnDescription(seg: { yarnComponents: { slot: string; rawMaterial: { code: string; description: string | null } }[] }) {
-  const pile = seg.yarnComponents.find((c) => c.slot.trim().toLowerCase() === 'pile');
-  if (!pile) return '';
+function pileYarnDescription(seg: { yarnComponents: { slot: string; mixingPct: number; rawMaterial: { code: string; description: string | null } }[] }) {
+  const pileRows = seg.yarnComponents.filter((c) => c.slot.trim().toLowerCase() === 'pile');
+  if (pileRows.length === 0) return '';
+  const pile = pileRows.reduce((a, b) => (b.mixingPct > a.mixingPct ? b : a));
   return pile.rawMaterial.description || pile.rawMaterial.code;
 }
 

@@ -8,6 +8,8 @@ export interface ItemSheetYarnRow {
   overrideNote?: string | null;
   // Yarn-dyed only: cost/kg to dye this slot.
   dyeingCostPerKg?: number;
+  // Yarn-dyed only: dye batch/shade label when this slot has multiple rows.
+  dyeVariant?: string | null;
 }
 export interface ItemSheetAccessoryRow {
   name: string;
@@ -307,7 +309,7 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): It
   ws.getCell(r, 1).font = SECTION_FONT;
   r++;
   const yarnHeaders = isYarnDyed
-    ? ['Slot', 'Material', 'Mixing %', 'Price/Kg', 'Contribution (Rs/Kg)', 'Dyeing cost/Kg', 'Dyeing contribution (Rs/Kg)']
+    ? ['Slot', 'Material', 'Mixing %', 'Price/Kg', 'Contribution (Rs/Kg)', 'Dyeing cost/Kg', 'Dyeing contribution (Rs/Kg)', 'Dye Variant']
     : ['Slot', 'Material', 'Mixing %', 'Price/Kg', 'Contribution (Rs/Kg)'];
   yarnHeaders.forEach((h, i) => {
     put(r, i + 1, h);
@@ -325,6 +327,7 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): It
     if (isYarnDyed) {
       putMoney(r, 6, y.dyeingCostPerKg ?? 0);
       putMoney(r, 7, { formula: `${bomMultiplierCell}*F${r}*C${r}/100` } as any);
+      put(r, 8, y.dyeVariant || (y.dyeingCostPerKg ? '' : 'White / Undyed'));
     }
     r++;
   }

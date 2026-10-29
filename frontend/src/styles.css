@@ -112,6 +112,35 @@ tr:hover td { background: var(--blue-light); }
 }
 .field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
 
+.searchable-select { position: relative; display: inline-block; width: 100%; }
+.searchable-select input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.searchable-select input:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+.searchable-select input:disabled { background: var(--bg); cursor: not-allowed; }
+.searchable-select-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+}
+.searchable-select-option { padding: 7px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.searchable-select-option.highlighted { background: var(--blue-light); }
+.searchable-select-option.selected { font-weight: 600; }
+
 .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; }
 .badge.pending { background: var(--warning-bg); color: var(--warning); }
 .badge.approved { background: var(--success-bg); color: var(--success); }

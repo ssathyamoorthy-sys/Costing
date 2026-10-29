@@ -71,6 +71,8 @@ export interface ProductYarnComponent {
   mixingPct: number;
   // Yarn-dyed only: cost/kg to dye this slot.
   dyeingCostPerKg?: number;
+  // Yarn-dyed only: dye batch/shade label when this slot has multiple rows.
+  dyeVariant?: string | null;
 }
 
 export interface ProductAccessory {
@@ -190,6 +192,8 @@ export interface QuoteLineSegmentYarn {
   rawMaterial?: RawMaterial;
   mixingPct: number;
   dyeingCostPerKg?: number;
+  // Yarn-dyed only: dye batch/shade label when this slot has multiple rows.
+  dyeVariant?: string | null;
 }
 
 export interface QuoteLineSegmentItemAccessory {

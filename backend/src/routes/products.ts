@@ -191,6 +191,8 @@ const yarnComponentSchema = z.object({
   mixingPct: z.number().positive(),
   // Yarn-dyed only: cost/kg to dye this slot.
   dyeingCostPerKg: z.number().nonnegative().optional(),
+  // Yarn-dyed only: dye batch/shade label when this slot has multiple rows - see schema.prisma.
+  dyeVariant: z.string().trim().min(1).optional().nullable(),
 });
 
 const productSchema = z.object({

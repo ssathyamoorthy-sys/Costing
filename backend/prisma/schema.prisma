@@ -153,6 +153,12 @@ model ProductYarnComponent {
   // Yarn-dyed only: cost/kg to dye this specific slot (different slots can be dyed
   // different shades, e.g. a contrast stripe costs more to dye than the base color).
   dyeingCostPerKg Float @default(0)
+  // Yarn-dyed only: a free-text label for which dye batch/shade this row represents, when
+  // a single slot (e.g. "Pile") is split across several rows with different dyeing costs
+  // (e.g. "VAT Dark", "Light", "White / Undyed"). Purely cosmetic - never used in pricing,
+  // which already sums every row's own mixingPct-weighted dyeingCostPerKg regardless of
+  // this label (see engine.ts).
+  dyeVariant String?
 }
 
 model ProcessingCharge {
@@ -366,6 +372,8 @@ model QuoteLineSegmentYarn {
   mixingPct     Float
   // Yarn-dyed only: cost/kg to dye this specific slot - see ProductYarnComponent.
   dyeingCostPerKg Float @default(0)
+  // Yarn-dyed only: dye batch/shade label for this row - see ProductYarnComponent.
+  dyeVariant String?
 }
 
 model QuoteLineSegmentItem {
@@ -485,6 +493,8 @@ model QuoteTemplateSegmentYarn {
   mixingPct     Float
   // Yarn-dyed only: cost/kg to dye this slot - see schema.prisma (ProductYarnComponent).
   dyeingCostPerKg Float @default(0)
+  // Yarn-dyed only: dye batch/shade label for this row - see ProductYarnComponent.
+  dyeVariant String?
 }
 
 model QuoteTemplateSegmentItem {

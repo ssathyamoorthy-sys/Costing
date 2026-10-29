@@ -3,12 +3,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api';
 import type { AccessoryType, Product, RawMaterial } from '../types';
 import { Alert } from '../components/Alert';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 interface YarnRow {
   slot: string;
   rawMaterialId: number;
   mixingPct: number;
   dyeingCostPerKg: number;
+  dyeVariant: string;
 }
 interface AccessoryRow {
   accessoryTypeId: number;
@@ -42,10 +44,10 @@ export function ProductEditPage() {
   });
   const [colorMethod, setColorMethod] = useState<'PIECE_DYED' | 'YARN_DYED'>('PIECE_DYED');
   const [yarnRows, setYarnRows] = useState<YarnRow[]>([
-    { slot: 'Ground', rawMaterialId: 0, mixingPct: 20, dyeingCostPerKg: 0 },
-    { slot: 'Pile', rawMaterialId: 0, mixingPct: 60, dyeingCostPerKg: 0 },
-    { slot: 'Weft', rawMaterialId: 0, mixingPct: 17, dyeingCostPerKg: 0 },
-    { slot: 'Scoured', rawMaterialId: 0, mixingPct: 3, dyeingCostPerKg: 0 },
+    { slot: 'Ground', rawMaterialId: 0, mixingPct: 20, dyeingCostPerKg: 0, dyeVariant: '' },
+    { slot: 'Pile', rawMaterialId: 0, mixingPct: 60, dyeingCostPerKg: 0, dyeVariant: '' },
+    { slot: 'Weft', rawMaterialId: 0, mixingPct: 17, dyeingCostPerKg: 0, dyeVariant: '' },
+    { slot: 'Scoured', rawMaterialId: 0, mixingPct: 3, dyeingCostPerKg: 0, dyeVariant: '' },
   ]);
   const [accessoryRows, setAccessoryRows] = useState<AccessoryRow[]>([]);
 
@@ -78,18 +80,51 @@ export function ProductEditPage() {
         washingLossPct: (p.washingLossPct ?? 0) * 100,
       });
       setColorMethod(p.colorMethod ?? 'PIECE_DYED');
-      setYarnRows(p.yarnComponents.map((c) => ({ slot: c.slot, rawMaterialId: c.rawMaterialId, mixingPct: c.mixingPct, dyeingCostPerKg: c.dyeingCostPerKg ?? 0 })));
+      setYarnRows(
+        p.yarnComponents.map((c) => ({
+          slot: c.slot,
+          rawMaterialId: c.rawMaterialId,
+          mixingPct: c.mixingPct,
+          dyeingCostPerKg: c.dyeingCostPerKg ?? 0,
+          dyeVariant: c.dyeVariant ?? '',
+        })),
+      );
       setAccessoryRows(p.accessories.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })));
     });
   }, [id, isNew]);
 
   const mixingTotal = yarnRows.reduce((s, r) => s + (Number(r.mixingPct) || 0), 0);
 
+  // A slot (e.g. "Pile") can be split across several rows with different dye variants/shades -
+  // sums each slot's mixing % across all its rows, so the running subtotal can be shown once
+  // per group (on its last row) instead of repeating a total that's only meaningful combined.
+  function yarnSlotTotal(slot: string): number {
+    const key = slot.trim().toLowerCase();
+    return yarnRows.reduce((s, r) => (r.slot.trim().toLowerCase() === key ? s + (Number(r.mixingPct) || 0) : s), 0);
+  }
+  function isLastRowOfSlot(rowIdx: number): boolean {
+    const key = yarnRows[rowIdx].slot.trim().toLowerCase();
+    return !yarnRows.some((r, i) => i > rowIdx && r.slot.trim().toLowerCase() === key);
+  }
+  function yarnSlotRowCount(slot: string): number {
+    const key = slot.trim().toLowerCase();
+    return yarnRows.filter((r) => r.slot.trim().toLowerCase() === key).length;
+  }
+
   function updateYarnRow(i: number, patch: Partial<YarnRow>) {
     setYarnRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
   function addYarnRow() {
-    setYarnRows((rows) => [...rows, { slot: '', rawMaterialId: 0, mixingPct: 0, dyeingCostPerKg: 0 }]);
+    setYarnRows((rows) => [...rows, { slot: '', rawMaterialId: 0, mixingPct: 0, dyeingCostPerKg: 0, dyeVariant: '' }]);
+  }
+  // Quick way to split a slot into another dye variant/shade without retyping the slot name.
+  function addYarnVariant(afterRowIdx: number) {
+    setYarnRows((rows) => {
+      const slot = rows[afterRowIdx]?.slot ?? '';
+      const next = [...rows];
+      next.splice(afterRowIdx + 1, 0, { slot, rawMaterialId: 0, mixingPct: 0, dyeingCostPerKg: 0, dyeVariant: '' });
+      return next;
+    });
   }
   function removeYarnRow(i: number) {
     setYarnRows((rows) => rows.filter((_, idx) => idx !== i));
@@ -125,7 +160,12 @@ export function ProductEditPage() {
       yarnDyeingProcessLossPct: fields.yarnDyeingProcessLossPct / 100,
       washingCostPerKg: fields.washingCostPerKg,
       washingLossPct: fields.washingLossPct / 100,
-      yarnComponents: yarnRows.map((r) => ({ ...r, mixingPct: Number(r.mixingPct), dyeingCostPerKg: Number(r.dyeingCostPerKg) || 0 })),
+      yarnComponents: yarnRows.map((r) => ({
+        ...r,
+        mixingPct: Number(r.mixingPct),
+        dyeingCostPerKg: Number(r.dyeingCostPerKg) || 0,
+        dyeVariant: r.dyeVariant.trim() || undefined,
+      })),
       force,
     };
 
@@ -277,47 +317,75 @@ export function ProductEditPage() {
               <th>Slot</th>
               <th>Raw material</th>
               <th className="right">Mixing %</th>
-              {colorMethod === 'YARN_DYED' && <th className="right">Dyeing cost/kg (₹)</th>}
+              {colorMethod === 'YARN_DYED' && (
+                <>
+                  <th className="right">Dyeing cost/kg (₹)</th>
+                  <th>Dye variant / shade</th>
+                </>
+              )}
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {yarnRows.map((row, i) => (
-              <tr key={i}>
-                <td>
-                  <input value={row.slot} onChange={(e) => updateYarnRow(i, { slot: e.target.value })} style={{ width: 110 }} />
-                </td>
-                <td>
-                  <select value={row.rawMaterialId} onChange={(e) => updateYarnRow(i, { rawMaterialId: Number(e.target.value) })}>
-                    <option value={0}>Select...</option>
-                    {rawMaterials.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.code}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="right">
-                  <input type="number" step="0.1" value={row.mixingPct} onChange={(e) => updateYarnRow(i, { mixingPct: Number(e.target.value) })} style={{ width: 80, textAlign: 'right' }} />
-                </td>
-                {colorMethod === 'YARN_DYED' && (
-                  <td className="right">
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={row.dyeingCostPerKg}
-                      onChange={(e) => updateYarnRow(i, { dyeingCostPerKg: Number(e.target.value) })}
-                      style={{ width: 90, textAlign: 'right' }}
+            {yarnRows.map((row, i) => {
+              const groupSize = yarnSlotRowCount(row.slot);
+              return (
+                <tr key={i}>
+                  <td>
+                    <input value={row.slot} onChange={(e) => updateYarnRow(i, { slot: e.target.value })} style={{ width: 110 }} />
+                  </td>
+                  <td>
+                    <SearchableSelect
+                      value={row.rawMaterialId || ''}
+                      onChange={(v) => updateYarnRow(i, { rawMaterialId: v === '' ? 0 : Number(v) })}
+                      options={rawMaterials.map((m) => ({ value: m.id, label: m.code, sublabel: m.description ?? undefined }))}
+                      style={{ minWidth: 140 }}
                     />
                   </td>
-                )}
-                <td>
-                  <button className="btn small danger" onClick={() => removeYarnRow(i)}>
-                    Remove
-                  </button>
-                </td>
-              </tr>
-            ))}
+                  <td className="right">
+                    <input type="number" step="0.1" value={row.mixingPct} onChange={(e) => updateYarnRow(i, { mixingPct: Number(e.target.value) })} style={{ width: 80, textAlign: 'right' }} />
+                    {groupSize > 1 && isLastRowOfSlot(i) && (
+                      <div className="muted" style={{ fontSize: 11 }}>
+                        "{row.slot}" total: {yarnSlotTotal(row.slot).toFixed(1)}%
+                      </div>
+                    )}
+                  </td>
+                  {colorMethod === 'YARN_DYED' && (
+                    <>
+                      <td className="right">
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={row.dyeingCostPerKg}
+                          onChange={(e) => updateYarnRow(i, { dyeingCostPerKg: Number(e.target.value) })}
+                          style={{ width: 90, textAlign: 'right' }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={row.dyeVariant}
+                          onChange={(e) => updateYarnRow(i, { dyeVariant: e.target.value })}
+                          placeholder={row.dyeingCostPerKg ? 'e.g. VAT Dark' : 'White / Undyed'}
+                          style={{ width: 120 }}
+                        />
+                      </td>
+                    </>
+                  )}
+                  <td>
+                    <div className="tag-row">
+                      {colorMethod === 'YARN_DYED' && (
+                        <button className="btn small" title="Split this slot into another dye variant" onClick={() => addYarnVariant(i)}>
+                          + Variant
+                        </button>
+                      )}
+                      <button className="btn small danger" onClick={() => removeYarnRow(i)}>
+                        Remove
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

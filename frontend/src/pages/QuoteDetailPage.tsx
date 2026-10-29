@@ -21,6 +21,7 @@ import type {
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { AiExtractModal } from '../components/AiExtractModal';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 // Shows a small "AI guessed X" hint only when the AI couldn't confidently match an existing
 // master-data record (matchedId is null) - once a real id is matched, the select is already
@@ -90,6 +91,7 @@ interface FormYarnRow {
   rawMaterialId: number | '';
   mixingPct: number;
   dyeingCostPerKg: number;
+  dyeVariant: string;
 }
 interface FormPackagingCharge {
   description: string;
@@ -127,9 +129,14 @@ function sizeLabel(item: { lengthCm: number; widthCm: number; fabricConsumptionS
 }
 // The Pile slot carries the towel's loop/terry yarn - the single most commercially relevant
 // yarn code to a merchandiser at a glance, so it's surfaced outside the Supervisor-only
-// "Yarn recipe" breakdown table.
-function pileYarnCode(seg: { yarnComponents: { slot: string; rawMaterial?: { code: string } | null }[] }) {
-  return seg.yarnComponents.find((c) => c.slot.trim().toLowerCase() === 'pile')?.rawMaterial?.code ?? null;
+// "Yarn recipe" breakdown table. A yarn-dyed product can split "Pile" across several rows
+// with different dyeing costs/shades (see dyeVariant) - show the one with the highest
+// mixing % as the representative one here.
+function pileYarnCode(seg: { yarnComponents: { slot: string; mixingPct: number; rawMaterial?: { code: string } | null }[] }) {
+  const pileRows = seg.yarnComponents.filter((c) => c.slot.trim().toLowerCase() === 'pile');
+  if (pileRows.length === 0) return null;
+  const pile = pileRows.reduce((a, b) => (b.mixingPct > a.mixingPct ? b : a));
+  return pile.rawMaterial?.code ?? null;
 }
 // "Single Product" means truly one simple piece per set (1 segment, 1 item type, 1 pc/set).
 // A single item type with qtyPerSet > 1 (e.g. a 4-pack sold as one set) is still a
@@ -279,7 +286,7 @@ export function QuoteDetailPage() {
       targetPrice: line.targetPrice != null ? String(line.targetPrice) : '',
       segments: line.segments.map((seg) => ({
         productId: seg.productId,
-        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg ?? 0 })),
+        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg ?? 0, dyeVariant: y.dyeVariant ?? '' })),
         items: seg.items.map((it) => ({
           itemTypeId: it.itemTypeId,
           lengthCm: String(it.lengthCm),
@@ -313,6 +320,7 @@ export function QuoteDetailPage() {
             rawMaterialId: y.rawMaterial.matchedId ?? ('' as number | ''),
             mixingPct: y.mixingPct ?? 0,
             dyeingCostPerKg: 0,
+            dyeVariant: '',
           })),
           items: seg.items.map((it) => ({
             itemTypeId: it.itemType.matchedId ?? ('' as number | ''),
@@ -367,7 +375,7 @@ export function QuoteDetailPage() {
       targetPrice: '',
       segments: template.segments.map((seg) => ({
         productId: seg.productId,
-        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg ?? 0 })),
+        yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg ?? 0, dyeVariant: y.dyeVariant ?? '' })),
         items: seg.items.map((it) => ({
           itemTypeId: it.itemTypeId,
           lengthCm: String(it.lengthCm),
@@ -455,7 +463,7 @@ export function QuoteDetailPage() {
           qtySets: template.qtySets,
           segments: template.segments.map((seg) => ({
             productId: seg.productId,
-            yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg ?? 0 })),
+            yarnComponents: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg ?? 0, dyeVariant: y.dyeVariant ?? undefined })),
             items: seg.items.map((it) => ({
               itemTypeId: it.itemTypeId,
               lengthCm: it.lengthCm,
@@ -506,6 +514,7 @@ export function QuoteDetailPage() {
                 rawMaterialId: c.rawMaterialId,
                 mixingPct: c.mixingPct,
                 dyeingCostPerKg: c.dyeingCostPerKg ?? 0,
+                dyeVariant: c.dyeVariant ?? '',
               })),
             }
           : seg,
@@ -515,7 +524,24 @@ export function QuoteDetailPage() {
   function addYarnRow(segIdx: number) {
     setForm((f) => ({
       ...f,
-      segments: f.segments.map((seg, i) => (i === segIdx ? { ...seg, yarnComponents: [...seg.yarnComponents, { slot: '', rawMaterialId: '', mixingPct: 0, dyeingCostPerKg: 0 }] } : seg)),
+      segments: f.segments.map((seg, i) =>
+        i === segIdx ? { ...seg, yarnComponents: [...seg.yarnComponents, { slot: '', rawMaterialId: '', mixingPct: 0, dyeingCostPerKg: 0, dyeVariant: '' }] } : seg,
+      ),
+    }));
+  }
+  // Quick way to split a slot (e.g. "Pile") into another dye variant/shade without retyping the
+  // slot name - inserts a blank sibling row right after the one being duplicated, same slot,
+  // mixing %/material/dyeing cost left for the user to fill in for the new variant.
+  function addYarnVariant(segIdx: number, afterRowIdx: number) {
+    setForm((f) => ({
+      ...f,
+      segments: f.segments.map((seg, i) => {
+        if (i !== segIdx) return seg;
+        const slot = seg.yarnComponents[afterRowIdx]?.slot ?? '';
+        const next = [...seg.yarnComponents];
+        next.splice(afterRowIdx + 1, 0, { slot, rawMaterialId: '', mixingPct: 0, dyeingCostPerKg: 0, dyeVariant: '' });
+        return { ...seg, yarnComponents: next };
+      }),
     }));
   }
   function updateYarnRow(segIdx: number, rowIdx: number, patch: Partial<FormYarnRow>) {
@@ -594,6 +620,7 @@ export function QuoteDetailPage() {
           rawMaterialId: Number(y.rawMaterialId),
           mixingPct: Number(y.mixingPct),
           dyeingCostPerKg: Number(y.dyeingCostPerKg) || 0,
+          dyeVariant: y.dyeVariant.trim() || undefined,
         })),
         items: seg.items.map((it) => {
           const isGarment = itemTypes.find((t) => t.id === it.itemTypeId)?.sizingMethod === 'FABRIC_CONSUMPTION';
@@ -863,6 +890,22 @@ export function QuoteDetailPage() {
 
   function segmentMixingTotal(seg: FormSegment) {
     return seg.yarnComponents.reduce((s, r) => s + (Number(r.mixingPct) || 0), 0);
+  }
+
+  // A slot (e.g. "Pile") can be split across several rows with different dye variants/shades -
+  // sums each slot's mixing % across all its rows, so the running subtotal can be shown once
+  // per group (on its last row) instead of repeating a total that's only meaningful combined.
+  function yarnSlotTotal(seg: FormSegment, slot: string): number {
+    const key = slot.trim().toLowerCase();
+    return seg.yarnComponents.reduce((s, r) => (r.slot.trim().toLowerCase() === key ? s + (Number(r.mixingPct) || 0) : s), 0);
+  }
+  function isLastRowOfSlot(seg: FormSegment, rowIdx: number): boolean {
+    const key = seg.yarnComponents[rowIdx].slot.trim().toLowerCase();
+    return !seg.yarnComponents.some((r, i) => i > rowIdx && r.slot.trim().toLowerCase() === key);
+  }
+  function yarnSlotRowCount(seg: FormSegment, slot: string): number {
+    const key = slot.trim().toLowerCase();
+    return seg.yarnComponents.filter((r) => r.slot.trim().toLowerCase() === key).length;
   }
 
   // Revenue-weighted blended margin across every set in the quote - lets a supervisor see
@@ -1818,15 +1861,11 @@ export function QuoteDetailPage() {
 
               <div className="field" style={{ maxWidth: 320 }}>
                 <label>Product (quality)</label>
-                <select value={seg.productId} onChange={(e) => setSegmentProduct(segIdx, Number(e.target.value))}>
-                  <option value="">Select...</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.code}
-                      {p.name ? ` - ${p.name}` : ''}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  value={seg.productId}
+                  onChange={(v) => setSegmentProduct(segIdx, Number(v))}
+                  options={products.map((p) => ({ value: p.id, label: p.code, sublabel: p.name ?? undefined }))}
+                />
                 {aiHint(aiHints?.segments[segIdx]?.product) && (
                   <span className="muted" style={{ fontSize: 12 }}>
                     {aiHint(aiHints?.segments[segIdx]?.product)}
@@ -1855,58 +1894,87 @@ export function QuoteDetailPage() {
                         <th>Slot</th>
                         <th>Raw material</th>
                         <th className="right">Mixing %</th>
-                        {products.find((p) => p.id === seg.productId)?.colorMethod === 'YARN_DYED' && <th className="right">Dyeing cost/kg (₹)</th>}
+                        {products.find((p) => p.id === seg.productId)?.colorMethod === 'YARN_DYED' && (
+                          <>
+                            <th className="right">Dyeing cost/kg (₹)</th>
+                            <th>Dye variant / shade</th>
+                          </>
+                        )}
                         <th></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {seg.yarnComponents.map((row, rowIdx) => (
-                        <tr key={rowIdx}>
-                          <td>
-                            <input value={row.slot} onChange={(e) => updateYarnRow(segIdx, rowIdx, { slot: e.target.value })} style={{ width: 100 }} />
-                          </td>
-                          <td>
-                            <select value={row.rawMaterialId} onChange={(e) => updateYarnRow(segIdx, rowIdx, { rawMaterialId: Number(e.target.value) })}>
-                              <option value="">Select...</option>
-                              {rawMaterials.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.code}
-                                </option>
-                              ))}
-                            </select>
-                            {aiHint(aiHints?.segments[segIdx]?.yarnComponents[rowIdx]?.rawMaterial) && (
-                              <div className="muted" style={{ fontSize: 11 }}>
-                                {aiHint(aiHints?.segments[segIdx]?.yarnComponents[rowIdx]?.rawMaterial)}
-                              </div>
-                            )}
-                          </td>
-                          <td className="right">
-                            <input
-                              type="number"
-                              step="0.1"
-                              value={row.mixingPct}
-                              onChange={(e) => updateYarnRow(segIdx, rowIdx, { mixingPct: Number(e.target.value) })}
-                              style={{ width: 70, textAlign: 'right' }}
-                            />
-                          </td>
-                          {products.find((p) => p.id === seg.productId)?.colorMethod === 'YARN_DYED' && (
+                      {seg.yarnComponents.map((row, rowIdx) => {
+                        const isYarnDyed = products.find((p) => p.id === seg.productId)?.colorMethod === 'YARN_DYED';
+                        const groupSize = yarnSlotRowCount(seg, row.slot);
+                        return (
+                          <tr key={rowIdx}>
+                            <td>
+                              <input value={row.slot} onChange={(e) => updateYarnRow(segIdx, rowIdx, { slot: e.target.value })} style={{ width: 100 }} />
+                            </td>
+                            <td>
+                              <SearchableSelect
+                                value={row.rawMaterialId}
+                                onChange={(v) => updateYarnRow(segIdx, rowIdx, { rawMaterialId: v === '' ? '' : Number(v) })}
+                                options={rawMaterials.map((m) => ({ value: m.id, label: m.code, sublabel: m.description ?? undefined }))}
+                                style={{ minWidth: 140 }}
+                              />
+                              {aiHint(aiHints?.segments[segIdx]?.yarnComponents[rowIdx]?.rawMaterial) && (
+                                <div className="muted" style={{ fontSize: 11 }}>
+                                  {aiHint(aiHints?.segments[segIdx]?.yarnComponents[rowIdx]?.rawMaterial)}
+                                </div>
+                              )}
+                            </td>
                             <td className="right">
                               <input
                                 type="number"
                                 step="0.1"
-                                value={row.dyeingCostPerKg}
-                                onChange={(e) => updateYarnRow(segIdx, rowIdx, { dyeingCostPerKg: Number(e.target.value) })}
-                                style={{ width: 90, textAlign: 'right' }}
+                                value={row.mixingPct}
+                                onChange={(e) => updateYarnRow(segIdx, rowIdx, { mixingPct: Number(e.target.value) })}
+                                style={{ width: 70, textAlign: 'right' }}
                               />
+                              {groupSize > 1 && isLastRowOfSlot(seg, rowIdx) && (
+                                <div className="muted" style={{ fontSize: 11 }}>
+                                  "{row.slot}" total: {yarnSlotTotal(seg, row.slot).toFixed(1)}%
+                                </div>
+                              )}
                             </td>
-                          )}
-                          <td>
-                            <button className="btn small danger" onClick={() => removeYarnRow(segIdx, rowIdx)}>
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                            {isYarnDyed && (
+                              <>
+                                <td className="right">
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    value={row.dyeingCostPerKg}
+                                    onChange={(e) => updateYarnRow(segIdx, rowIdx, { dyeingCostPerKg: Number(e.target.value) })}
+                                    style={{ width: 90, textAlign: 'right' }}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    value={row.dyeVariant}
+                                    onChange={(e) => updateYarnRow(segIdx, rowIdx, { dyeVariant: e.target.value })}
+                                    placeholder={row.dyeingCostPerKg ? 'e.g. VAT Dark' : 'White / Undyed'}
+                                    style={{ width: 120 }}
+                                  />
+                                </td>
+                              </>
+                            )}
+                            <td>
+                              <div className="tag-row">
+                                {isYarnDyed && (
+                                  <button className="btn small" title="Split this slot into another dye variant" onClick={() => addYarnVariant(segIdx, rowIdx)}>
+                                    + Variant
+                                  </button>
+                                )}
+                                <button className="btn small danger" onClick={() => removeYarnRow(segIdx, rowIdx)}>
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1975,17 +2043,12 @@ export function QuoteDetailPage() {
                       </div>
                       <div className="field">
                         <label>HSN Code (Duty Drawback)</label>
-                        <select
+                        <SearchableSelect
                           value={item.hsnCodeId}
-                          onChange={(e) => updateItem(segIdx, itemIdx, { hsnCodeId: e.target.value ? Number(e.target.value) : '' })}
-                        >
-                          <option value="">None</option>
-                          {hsnCodes.map((h) => (
-                            <option key={h.id} value={h.id}>
-                              {h.description} - {h.hsCode}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={(v) => updateItem(segIdx, itemIdx, { hsnCodeId: v === '' ? '' : Number(v) })}
+                          options={hsnCodes.map((h) => ({ value: h.id, label: h.hsCode, sublabel: h.description }))}
+                          placeholder="None"
+                        />
                         {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.hsnCode) && (
                           <span className="muted" style={{ fontSize: 12 }}>
                             {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.hsnCode)}

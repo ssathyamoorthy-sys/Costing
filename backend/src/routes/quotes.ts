@@ -45,10 +45,13 @@ function sanitizeLinesForRole<T extends { segments: { items: { costBreakupJson: 
 
 // The Pile slot carries the towel's loop/terry yarn - shown by its master description (e.g.
 // "16s Ring Spun Combed") on customer-facing downloads, falling back to the code if no
-// description is set in Raw Material Master.
-function pileYarnDescription(seg: { yarnComponents: { slot: string; rawMaterial: { code: string; description: string | null } }[] }) {
-  const pile = seg.yarnComponents.find((c) => c.slot.trim().toLowerCase() === 'pile');
-  if (!pile) return '';
+// description is set in Raw Material Master. A yarn-dyed product can split "Pile" across
+// several rows with different dyeing costs/shades (see dyeVariant on ProductYarnComponent) -
+// pick the one with the highest mixing % as the representative one for this summary line.
+function pileYarnDescription(seg: { yarnComponents: { slot: string; mixingPct: number; rawMaterial: { code: string; description: string | null } }[] }) {
+  const pileRows = seg.yarnComponents.filter((c) => c.slot.trim().toLowerCase() === 'pile');
+  if (pileRows.length === 0) return '';
+  const pile = pileRows.reduce((a, b) => (b.mixingPct > a.mixingPct ? b : a));
   return pile.rawMaterial.description || pile.rawMaterial.code;
 }
 
@@ -820,6 +823,8 @@ const segmentYarnSchema = z.object({
   mixingPct: z.number().positive(),
   // Yarn-dyed only: cost/kg to dye this slot - see schema.prisma.
   dyeingCostPerKg: z.number().nonnegative().optional(),
+  // Yarn-dyed only: dye batch/shade label when this slot has multiple rows - see schema.prisma.
+  dyeVariant: z.string().trim().min(1).optional().nullable(),
 });
 
 const segmentSchema = z.object({
@@ -982,7 +987,7 @@ type LineWithSegmentsForTemplate = {
   segments: {
     productId: number;
     sortOrder: number;
-    yarnComponents: { slot: string; rawMaterialId: number; mixingPct: number; dyeingCostPerKg: number }[];
+    yarnComponents: { slot: string; rawMaterialId: number; mixingPct: number; dyeingCostPerKg: number; dyeVariant: string | null }[];
     items: {
       itemTypeId: number;
       lengthCm: number;
@@ -1001,7 +1006,7 @@ function segmentsCreateInputForTemplate(line: LineWithSegmentsForTemplate) {
     productId: seg.productId,
     sortOrder: i,
     yarnComponents: {
-      create: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg })),
+      create: seg.yarnComponents.map((y) => ({ slot: y.slot, rawMaterialId: y.rawMaterialId, mixingPct: y.mixingPct, dyeingCostPerKg: y.dyeingCostPerKg, dyeVariant: y.dyeVariant })),
     },
     items: {
       create: seg.items.map((item) => ({

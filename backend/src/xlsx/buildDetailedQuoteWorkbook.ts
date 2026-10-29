@@ -96,6 +96,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
             pricePerKg: override.overridePricePerKg,
             overrideNote: override.reason || 'override',
             dyeingCostPerKg: y.dyeingCostPerKg,
+            dyeVariant: y.dyeVariant,
           });
         } else {
           const resolved = await resolveCurrentRate(y.rawMaterialId);
@@ -106,6 +107,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
             pricePerKg: resolved?.pricePerKg ?? 0,
             overrideNote: resolved?.isStale ? 'stale rate' : null,
             dyeingCostPerKg: y.dyeingCostPerKg,
+            dyeVariant: y.dyeVariant,
           });
         }
       }

@@ -34,6 +34,9 @@ export interface SegmentYarnInput {
   mixingPct: number;
   // Yarn-dyed only: cost/kg to dye this slot - see schema.prisma.
   dyeingCostPerKg?: number;
+  // Yarn-dyed only: dye batch/shade label when this slot has multiple rows - cosmetic only,
+  // never read by the pricing math below (see schema.prisma).
+  dyeVariant?: string | null;
 }
 export interface SegmentInput {
   productId: number;

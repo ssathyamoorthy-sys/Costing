@@ -6,6 +6,7 @@ import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
 import { AiExtractModal } from '../components/AiExtractModal';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 function statusLabel(status: string) {
   switch (status) {
@@ -149,14 +150,11 @@ export function QuotesListPage() {
           <div className="form-grid">
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label>Customer</label>
-              <select value={customerId} onChange={(e) => setCustomerId(Number(e.target.value))}>
-                <option value="">Select...</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={customerId}
+                onChange={(v) => setCustomerId(v === '' ? '' : Number(v))}
+                options={customers.map((c) => ({ value: c.id, label: c.name }))}
+              />
             </div>
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label>Customer enquiry no. (optional)</label>
