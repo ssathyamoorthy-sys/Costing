@@ -243,6 +243,7 @@ export interface QuoteLine {
   id: number;
   quoteId: number;
   color: string;
+  articleRef?: string | null;
   qtySets: number;
   targetPrice?: number | null;
   marginPctOverride?: number | null;

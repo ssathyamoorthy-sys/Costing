@@ -184,7 +184,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
           setNo: lineIdx + 1,
           segment: ctx.segmentLabel,
           item: item.itemType.name,
-          size: isGarment ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.lengthCm}x${item.widthCm}`,
+          size: isGarment ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.widthCm}x${item.lengthCm}`,
           gsmFormula: gsmCell,
           qty: item.qtyPerSet,
           qtyPerSetFormula: qtyPerSetCell,

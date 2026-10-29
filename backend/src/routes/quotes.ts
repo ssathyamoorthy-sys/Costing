@@ -245,10 +245,11 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
     { header: 'Item', key: 'item', width: 16 },
     { header: 'Quality', key: 'quality', width: 20 },
     { header: 'Pile Yarn', key: 'pileYarn', width: 24 },
-    { header: 'Length (cm)', key: 'length', width: 12 },
     { header: 'Width (cm)', key: 'width', width: 12 },
+    { header: 'Length (cm)', key: 'length', width: 12 },
     { header: 'GSM', key: 'gsm', width: 8 },
     { header: 'Color', key: 'color', width: 14 },
+    { header: 'Article Ref', key: 'articleRef', width: 16 },
     { header: 'Qty/Set', key: 'qtyPerSet', width: 10 },
     { header: `Rate/Pc (${currency})`, key: 'ratePc', width: 14, numFmt: '#,##0.0000' },
   ];
@@ -267,10 +268,11 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
           item: item.itemType.name,
           quality: seg.product.name || seg.product.code,
           pileYarn: pileYarnDescription(seg),
-          length: item.lengthCm,
           width: item.widthCm,
+          length: item.lengthCm,
           gsm: item.gsm,
           color: line.color,
+          articleRef: line.articleRef || '',
           qtyPerSet: isSingle ? `${line.qtySets} pcs` : item.qtyPerSet,
           ratePc: breakup?.ratePerPiece?.[currency] ?? '',
         });
@@ -835,6 +837,7 @@ const segmentSchema = z.object({
 
 const lineSchema = z.object({
   color: z.string().min(1),
+  articleRef: z.string().trim().min(1).optional().nullable(),
   qtySets: z.number().int().positive(),
   targetPrice: z.number().optional(),
   segments: z.array(segmentSchema).min(1),
@@ -899,6 +902,7 @@ quotesRouter.post('/:id/lines', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN
       data: {
         quoteId,
         color: parsed.data.color,
+        articleRef: parsed.data.articleRef ?? undefined,
         qtySets: parsed.data.qtySets,
         targetPrice: parsed.data.targetPrice,
         costBreakupJson: JSON.stringify({ ratePerSet: result.ratePerSet }),
@@ -947,6 +951,7 @@ quotesRouter.put('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISOR',
       where: { id: lineId },
       data: {
         color: parsed.data.color,
+        articleRef: parsed.data.articleRef ?? null,
         qtySets: parsed.data.qtySets,
         targetPrice: parsed.data.targetPrice,
         costBreakupJson: JSON.stringify({ ratePerSet: result.ratePerSet }),

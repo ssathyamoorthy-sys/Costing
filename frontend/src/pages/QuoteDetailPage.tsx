@@ -127,6 +127,7 @@ interface FormSegment {
 }
 interface SetForm {
   color: string;
+  articleRef: string;
   qtySets: string;
   targetPrice: string;
   segments: FormSegment[];
@@ -138,7 +139,7 @@ function emptyItem(): FormItem {
 // Garment items (fabricConsumptionSqm set, lengthCm/widthCm left at the 0 sentinel) show
 // the fabric consumption instead of a meaningless "0x0cm".
 function sizeLabel(item: { lengthCm: number; widthCm: number; fabricConsumptionSqm?: number | null }) {
-  return item.fabricConsumptionSqm ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.lengthCm}x${item.widthCm}cm`;
+  return item.fabricConsumptionSqm ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.widthCm}x${item.lengthCm}cm`;
 }
 // The Pile slot carries the towel's loop/terry yarn - the single most commercially relevant
 // yarn code to a merchandiser at a glance, so it's surfaced outside the Supervisor-only
@@ -162,7 +163,7 @@ function emptySegment(): FormSegment {
   return { productId: '', yarnComponents: [], items: [emptyItem()] };
 }
 function emptySetForm(): SetForm {
-  return { color: '', qtySets: '1', targetPrice: '', segments: [emptySegment()] };
+  return { color: '', articleRef: '', qtySets: '1', targetPrice: '', segments: [emptySegment()] };
 }
 
 export function QuoteDetailPage() {
@@ -325,6 +326,7 @@ export function QuoteDetailPage() {
     setEditingLineId(line.id);
     setForm({
       color: line.color,
+      articleRef: line.articleRef ?? '',
       qtySets: String(line.qtySets),
       targetPrice: line.targetPrice != null ? String(line.targetPrice) : '',
       segments: line.segments.map((seg) => ({
@@ -380,6 +382,7 @@ export function QuoteDetailPage() {
       : [emptySegment()];
     setForm({
       color: result.color ?? '',
+      articleRef: '',
       qtySets: result.qtySets != null ? String(result.qtySets) : '1',
       targetPrice: result.targetPrice != null ? String(result.targetPrice) : '',
       segments,
@@ -415,6 +418,7 @@ export function QuoteDetailPage() {
     const template = await api.get<QuoteTemplate>(`/quote-templates/${templateId}`);
     setForm({
       color: template.color,
+      articleRef: template.name,
       qtySets: String(template.qtySets),
       targetPrice: '',
       segments: template.segments.map((seg) => ({
@@ -439,7 +443,8 @@ export function QuoteDetailPage() {
   }
 
   async function saveLineAsTemplate(lineId: number) {
-    const name = prompt('Name this template (e.g. "Greenline Standard Gift Set"):');
+    const line = quote!.lines.find((l) => l.id === lineId);
+    const name = prompt('Name this template (e.g. "Greenline Standard Gift Set"):', line?.articleRef ?? '');
     if (!name) return;
     try {
       await api.post(`/quotes/${quote!.id}/lines/${lineId}/save-as-template`, { name });
@@ -505,6 +510,7 @@ export function QuoteDetailPage() {
       for (const template of group.templates) {
         const payload = {
           color: template.color,
+          articleRef: template.name,
           qtySets: template.qtySets,
           segments: template.segments.map((seg) => ({
             productId: seg.productId,
@@ -676,6 +682,7 @@ export function QuoteDetailPage() {
   function buildPayload() {
     return {
       color: form.color,
+      articleRef: form.articleRef.trim() || undefined,
       qtySets: Number(form.qtySets),
       targetPrice: form.targetPrice ? Number(form.targetPrice) : undefined,
       segments: form.segments.map((seg) => ({
@@ -1662,11 +1669,13 @@ export function QuoteDetailPage() {
                     {singleItem!.gsm}
                     {pileYarnCode(singleSeg!) && ` - Pile Yarn: ${pileYarnCode(singleSeg!)}`} - Qty {line.qtySets.toLocaleString()} pcs (
                     {lineTotalKg.toFixed(2)} kg)
+                    {line.articleRef && ` - Article Ref#: ${line.articleRef}`}
                   </>
                 ) : (
                   <>
                     {' '}
                     - Color: {line.color} - {line.qtySets.toLocaleString()} set(s) ordered
+                    {line.articleRef && ` - Article Ref#: ${line.articleRef}`}
                     <span className="muted"> ({line.segments.length} segments, bundled)</span>
                   </>
                 )}
@@ -1899,6 +1908,10 @@ export function QuoteDetailPage() {
               <FieldError show={attemptedSubmit && !form.color} message="Color is required." />
             </div>
             <div className="field">
+              <label>Article Ref#</label>
+              <input value={form.articleRef} onChange={(e) => setForm({ ...form, articleRef: e.target.value })} />
+            </div>
+            <div className="field">
               <label>{mode === 'single' ? 'Qty (pcs)' : 'Sets ordered'}</label>
               <input type="number" value={form.qtySets} onChange={(e) => setForm({ ...form, qtySets: e.target.value })} />
               <FieldError show={attemptedSubmit && !form.qtySets} message="Quantity is required." />
@@ -2102,14 +2115,14 @@ export function QuoteDetailPage() {
                       ) : (
                         <>
                           <div className="field">
-                            <label>Length (cm)</label>
-                            <input type="number" value={item.lengthCm} onChange={(e) => updateItem(segIdx, itemIdx, { lengthCm: e.target.value })} />
-                            <FieldError show={attemptedSubmit && !item.lengthCm} message="Length is required." />
-                          </div>
-                          <div className="field">
                             <label>Width (cm)</label>
                             <input type="number" value={item.widthCm} onChange={(e) => updateItem(segIdx, itemIdx, { widthCm: e.target.value })} />
                             <FieldError show={attemptedSubmit && !item.widthCm} message="Width is required." />
+                          </div>
+                          <div className="field">
+                            <label>Length (cm)</label>
+                            <input type="number" value={item.lengthCm} onChange={(e) => updateItem(segIdx, itemIdx, { lengthCm: e.target.value })} />
+                            <FieldError show={attemptedSubmit && !item.lengthCm} message="Length is required." />
                           </div>
                         </>
                       )}

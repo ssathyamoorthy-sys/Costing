@@ -184,11 +184,11 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): It
     pieceWeightCell = put(r, 2, { formula: `${fabricCell}*${gsmCell}` } as any);
     r++;
   } else {
-    put(r, 1, 'Length (cm)');
-    const lengthCell = put(r, 2, ctx.lengthCm);
-    r++;
     put(r, 1, 'Width (cm)');
     const widthCell = put(r, 2, ctx.widthCm);
+    r++;
+    put(r, 1, 'Length (cm)');
+    const lengthCell = put(r, 2, ctx.lengthCm);
     r++;
     put(r, 1, 'GSM');
     gsmCell = put(r, 2, ctx.gsm);

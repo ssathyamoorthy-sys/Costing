@@ -321,6 +321,11 @@ model QuoteLine {
   qtySets     Int
   targetPrice Float?
 
+  // Customer's own style/article reference for this Set - free text, independently
+  // editable, optionally pre-filled from a loaded recipe/template's name but never tied
+  // to it afterwards. Shown on the quote page and in the basic Excel export.
+  articleRef String?
+
   // Supervisor-only, per-Set margin override that wins over the quote-wide override (and
   // ultimately the customer default) for this Set only - used by "Match target price" to
   // hit a specific Set's target without moving the price of any other Set in the quote.

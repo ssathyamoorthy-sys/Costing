@@ -5,7 +5,7 @@ import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 
 function templateSizeLabel(item: { lengthCm: number; widthCm: number; fabricConsumptionSqm?: number | null }) {
-  return item.fabricConsumptionSqm ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.lengthCm}x${item.widthCm}cm`;
+  return item.fabricConsumptionSqm ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.widthCm}x${item.lengthCm}cm`;
 }
 
 export function TemplatesPage() {

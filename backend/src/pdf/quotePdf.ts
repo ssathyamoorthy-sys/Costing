@@ -166,7 +166,7 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
           { text: item.itemType.name, width: cols[0].width },
           { text: seg.product.name || seg.product.code, width: cols[1].width },
           { text: pileYarnDescription(seg), width: cols[2].width },
-          { text: `${item.lengthCm}x${item.widthCm}`, width: cols[3].width },
+          { text: `${item.widthCm}x${item.lengthCm}`, width: cols[3].width },
           { text: String(item.gsm), width: cols[4].width },
           { text: line.color, width: cols[5].width },
           { text: qty.toLocaleString(), width: cols[6].width, align: 'right' },
