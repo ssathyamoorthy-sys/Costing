@@ -17,6 +17,7 @@ export function SearchableSelect({
   placeholder = 'Select...',
   disabled,
   style,
+  recentValues,
 }: {
   value: number | '';
   onChange: (value: number | '') => void;
@@ -24,6 +25,9 @@ export function SearchableSelect({
   placeholder?: string;
   disabled?: boolean;
   style?: React.CSSProperties;
+  // Most-recent-first ids (see useRecentItems) - pinned at the top, under a "Recent" label,
+  // only while the query is empty (typing searches everything, recency stops mattering).
+  recentValues?: number[];
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -32,9 +36,16 @@ export function SearchableSelect({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selected = options.find((o) => o.value === value);
-  const filtered = query.trim()
-    ? options.filter((o) => `${o.label} ${o.sublabel ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
+  const trimmedQuery = query.trim();
+  const searched = trimmedQuery
+    ? options.filter((o) => `${o.label} ${o.sublabel ?? ''}`.toLowerCase().includes(trimmedQuery.toLowerCase()))
     : options;
+  const recentOptions = !trimmedQuery && recentValues?.length
+    ? (recentValues.map((id) => options.find((o) => o.value === id)).filter(Boolean) as SearchableSelectOption[])
+    : [];
+  const recentIds = new Set(recentOptions.map((o) => o.value));
+  const otherOptions = searched.filter((o) => !recentIds.has(o.value));
+  const filtered = [...recentOptions, ...otherOptions]; // one ordered list, drives keyboard highlight index
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -117,9 +128,10 @@ export function SearchableSelect({
             {placeholder}
           </div>
           {filtered.length === 0 && <div className="searchable-select-option muted">No matches</div>}
-          {filtered.map((o, i) => (
+          {recentOptions.length > 0 && <div className="searchable-select-group-label">Recent</div>}
+          {recentOptions.map((o, i) => (
             <div
-              key={o.value}
+              key={`recent-${o.value}`}
               role="option"
               aria-selected={o.value === value}
               className={`searchable-select-option ${i === highlighted ? 'highlighted' : ''} ${o.value === value ? 'selected' : ''}`}
@@ -133,6 +145,26 @@ export function SearchableSelect({
               {o.sublabel && <span className="muted"> - {o.sublabel}</span>}
             </div>
           ))}
+          {recentOptions.length > 0 && otherOptions.length > 0 && <div className="searchable-select-group-label">All</div>}
+          {otherOptions.map((o, i) => {
+            const idx = recentOptions.length + i;
+            return (
+              <div
+                key={o.value}
+                role="option"
+                aria-selected={o.value === value}
+                className={`searchable-select-option ${idx === highlighted ? 'highlighted' : ''} ${o.value === value ? 'selected' : ''}`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  choose(o.value);
+                }}
+                onMouseEnter={() => setHighlighted(idx)}
+              >
+                {o.label}
+                {o.sublabel && <span className="muted"> - {o.sublabel}</span>}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

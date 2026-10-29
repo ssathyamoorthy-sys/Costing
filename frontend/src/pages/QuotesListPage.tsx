@@ -7,6 +7,11 @@ import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
 import { AiExtractModal } from '../components/AiExtractModal';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { SortableTh } from '../components/SortableTh';
+import { useRecentItems } from '../hooks/useRecentItems';
+import { useSortableTable } from '../hooks/useSortableTable';
+
+const STATUS_OPTIONS = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'SENT', 'CONVERTED_TO_ORDER', 'LOST_PRICE', 'LOST_MOQ', 'LOST_LEAD_TIME'];
 
 function statusLabel(status: string) {
   switch (status) {
@@ -55,6 +60,9 @@ export function QuotesListPage() {
   const [customerEnquiryNo, setCustomerEnquiryNo] = useState('');
   const [showAiExtract, setShowAiExtract] = useState(false);
   const [pendingAiExtraction, setPendingAiExtraction] = useState<ExtractionResult | null>(null);
+  const [recentCustomers, pushRecentCustomer] = useRecentItems('customer');
+  const [filterText, setFilterText] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
 
   function load() {
     api.get<Quote[]>('/quotes').then(setQuotes).catch((e) => setError(e.message));
@@ -82,6 +90,7 @@ export function QuotesListPage() {
     if (!customerId) return;
     try {
       const q = await api.post<Quote>('/quotes', { customerId, customerEnquiryNo: customerEnquiryNo || undefined });
+      pushRecentCustomer(customerId);
       navigate(`/quotes/${q.id}`, { state: pendingAiExtraction ? { aiExtraction: pendingAiExtraction } : undefined });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -89,6 +98,33 @@ export function QuotesListPage() {
   }
 
   const canCreate = user?.role === 'MERCHANDISER' || user?.role === 'SUPERVISOR' || user?.role === 'ADMIN';
+
+  const filteredQuotes = quotes.filter((q) => {
+    if (filterStatus && q.status !== filterStatus) return false;
+    if (!filterText.trim()) return true;
+    const needle = filterText.trim().toLowerCase();
+    return (
+      q.quoteNo.toLowerCase().includes(needle) ||
+      (q.customerEnquiryNo ?? '').toLowerCase().includes(needle) ||
+      (q.customer?.name ?? '').toLowerCase().includes(needle)
+    );
+  });
+  const { sorted: sortedQuotes, sortKey, sortDir, toggleSort } = useSortableTable(
+    filteredQuotes,
+    {
+      quoteNo: (q) => q.quoteNo,
+      customerEnquiryNo: (q) => q.customerEnquiryNo ?? '',
+      customer: (q) => q.customer?.name ?? '',
+      currency: (q) => q.currency,
+      status: (q) => q.status,
+      cvn: (q) => q.finalReferenceNo ?? '',
+      lines: (q) => q.lines.length,
+      createdBy: (q) => q.createdBy?.name ?? '',
+      created: (q) => q.createdAt,
+    },
+    'created',
+    'desc',
+  );
 
   return (
     <div>
@@ -106,23 +142,50 @@ export function QuotesListPage() {
         )}
       </div>
       {error && <Alert type="error">{error}</Alert>}
+      <div className="tag-row" style={{ marginBottom: 14 }}>
+        <input
+          placeholder="Filter by quote no, enquiry no, or customer..."
+          value={filterText}
+          onChange={(e) => setFilterText(e.target.value)}
+          style={{ minWidth: 260 }}
+        />
+        <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+          <option value="">All statuses</option>
+          {STATUS_OPTIONS.map((s) => (
+            <option key={s} value={s}>
+              {statusLabel(s)}
+            </option>
+          ))}
+        </select>
+        {(filterText || filterStatus) && (
+          <button
+            className="btn small"
+            onClick={() => {
+              setFilterText('');
+              setFilterStatus('');
+            }}
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
       <div className="panel">
         <table>
           <thead>
             <tr>
-              <th>Quote No</th>
-              <th>Customer Enquiry No</th>
-              <th>Customer</th>
-              <th>Currency</th>
-              <th>Status</th>
-              <th>CVN</th>
-              <th>Lines</th>
-              <th>Created by</th>
-              <th>Created</th>
+              <SortableTh label="Quote No" sortKey="quoteNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Customer Enquiry No" sortKey="customerEnquiryNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Customer" sortKey="customer" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Currency" sortKey="currency" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="CVN" sortKey="cvn" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Lines" sortKey="lines" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Created by" sortKey="createdBy" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Created" sortKey="created" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
             </tr>
           </thead>
           <tbody>
-            {quotes.map((q) => (
+            {sortedQuotes.map((q) => (
               <tr key={q.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/quotes/${q.id}`)}>
                 <td>
                   <Link to={`/quotes/${q.id}`} onClick={(e) => e.stopPropagation()}>
@@ -154,6 +217,7 @@ export function QuotesListPage() {
                 value={customerId}
                 onChange={(v) => setCustomerId(v === '' ? '' : Number(v))}
                 options={customers.map((c) => ({ value: c.id, label: c.name }))}
+                recentValues={recentCustomers}
               />
             </div>
             <div className="field" style={{ gridColumn: '1 / -1' }}>

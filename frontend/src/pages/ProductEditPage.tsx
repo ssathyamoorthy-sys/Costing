@@ -4,6 +4,7 @@ import { api, ApiError } from '../api';
 import type { AccessoryType, Product, RawMaterial } from '../types';
 import { Alert } from '../components/Alert';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { useRecentItems } from '../hooks/useRecentItems';
 
 interface YarnRow {
   slot: string;
@@ -111,7 +112,9 @@ export function ProductEditPage() {
     return yarnRows.filter((r) => r.slot.trim().toLowerCase() === key).length;
   }
 
+  const [recentRawMaterials, pushRecentRawMaterial] = useRecentItems('rawMaterial');
   function updateYarnRow(i: number, patch: Partial<YarnRow>) {
+    if (patch.rawMaterialId) pushRecentRawMaterial(patch.rawMaterialId);
     setYarnRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
   function addYarnRow() {
@@ -339,6 +342,7 @@ export function ProductEditPage() {
                       value={row.rawMaterialId || ''}
                       onChange={(v) => updateYarnRow(i, { rawMaterialId: v === '' ? 0 : Number(v) })}
                       options={rawMaterials.map((m) => ({ value: m.id, label: m.code, sublabel: m.description ?? undefined }))}
+                      recentValues={recentRawMaterials}
                       style={{ minWidth: 140 }}
                     />
                   </td>

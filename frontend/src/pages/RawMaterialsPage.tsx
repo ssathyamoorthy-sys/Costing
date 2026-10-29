@@ -5,6 +5,8 @@ import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
 import { ImportExportBar } from '../components/ImportExportBar';
+import { SortableTh } from '../components/SortableTh';
+import { useSortableTable } from '../hooks/useSortableTable';
 
 export function RawMaterialsPage() {
   const { user } = useAuth();
@@ -26,6 +28,7 @@ export function RawMaterialsPage() {
   const [price, setPrice] = useState(0);
   const [validFrom, setValidFrom] = useState(new Date().toISOString().slice(0, 10));
   const [validTo, setValidTo] = useState('');
+  const [filterText, setFilterText] = useState('');
 
   function load() {
     api.get<RawMaterial[]>('/raw-materials').then(setMaterials).catch((e) => setError(e.message));
@@ -94,6 +97,18 @@ export function RawMaterialsPage() {
     }
   }
 
+  const filteredMaterials = materials.filter((m) => {
+    if (!filterText.trim()) return true;
+    const needle = filterText.trim().toLowerCase();
+    return m.code.toLowerCase().includes(needle) || (m.description ?? '').toLowerCase().includes(needle);
+  });
+  const { sorted: sortedMaterials, sortKey, sortDir, toggleSort } = useSortableTable(filteredMaterials, {
+    code: (m) => m.code,
+    description: (m) => m.description ?? '',
+    rate: (m) => m.currentRate?.pricePerKg ?? -1,
+    validFrom: (m) => m.currentRate?.validFrom ?? '',
+  });
+
   return (
     <div>
       <div className="toolbar">
@@ -154,20 +169,23 @@ export function RawMaterialsPage() {
         </div>
       )}
 
+      <div className="tag-row" style={{ marginBottom: 14 }}>
+        <input placeholder="Filter by code or description..." value={filterText} onChange={(e) => setFilterText(e.target.value)} style={{ minWidth: 260 }} />
+      </div>
       <div className="panel">
         <table>
           <thead>
             <tr>
-              <th>Code</th>
-              <th>Description</th>
-              <th className="right">Current Rate/Kg</th>
-              <th>Valid From</th>
+              <SortableTh label="Code" sortKey="code" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Description" sortKey="description" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Current Rate/Kg" sortKey="rate" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+              <SortableTh label="Valid From" sortKey="validFrom" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
               <th></th>
               {(isPurchase || isSupervisor) && <th className="right">Action</th>}
             </tr>
           </thead>
           <tbody>
-            {materials.map((m) => (
+            {sortedMaterials.map((m) => (
               <tr key={m.id}>
                 <td>{m.code}</td>
                 <td className="muted">{m.description}</td>

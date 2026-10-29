@@ -5,6 +5,8 @@ import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
 import { ImportExportBar } from '../components/ImportExportBar';
+import { SortableTh } from '../components/SortableTh';
+import { useSortableTable } from '../hooks/useSortableTable';
 import { COUNTRIES } from '../countries';
 
 const REGIONS: Region[] = ['Asia', 'Europe', 'UK', 'US', 'Oceania', 'Far East', 'Domestic (India)'];
@@ -31,11 +33,25 @@ export function CustomersPage() {
   const [editing, setEditing] = useState<Customer | null>(null);
   const [form, setForm] = useState(empty);
   const [showForm, setShowForm] = useState(false);
+  const [filterText, setFilterText] = useState('');
 
   function load() {
     api.get<Customer[]>('/customers').then(setItems).catch((e) => setError(e.message));
   }
   useEffect(load, []);
+
+  const filtered = items.filter((c) => {
+    if (!filterText.trim()) return true;
+    const needle = filterText.trim().toLowerCase();
+    return c.name.toLowerCase().includes(needle) || (c.countries ?? '').toLowerCase().includes(needle);
+  });
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(filtered, {
+    name: (c) => c.name,
+    region: (c) => c.region,
+    currency: (c) => (c.region === 'Domestic (India)' ? 'INR' : c.currency),
+    marginPct: (c) => c.marginPct,
+    commissionPct: (c) => c.commissionPct,
+  });
 
   function openNew() {
     setEditing(null);
@@ -100,25 +116,28 @@ export function CustomersPage() {
         canEdit={canEdit}
         onImported={load}
       />
+      <div className="tag-row" style={{ marginBottom: 14 }}>
+        <input placeholder="Filter by name or country..." value={filterText} onChange={(e) => setFilterText(e.target.value)} style={{ minWidth: 260 }} />
+      </div>
       <div className="panel">
         <table>
           <thead>
             <tr>
-              <th>Customer</th>
-              <th>Region</th>
+              <SortableTh label="Customer" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Region" sortKey="region" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
               <th>Countries</th>
-              <th>Currency</th>
+              <SortableTh label="Currency" sortKey="currency" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
               <th>Payment Terms</th>
               <th>Freight Terms</th>
               <th className="right">W.C. Int %</th>
               <th className="right">LC Int %</th>
-              <th className="right">Margin %</th>
-              <th className="right">Commission %</th>
+              <SortableTh label="Margin %" sortKey="marginPct" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+              <SortableTh label="Commission %" sortKey="commissionPct" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
               {canEdit && <th />}
             </tr>
           </thead>
           <tbody>
-            {items.map((c) => (
+            {sorted.map((c) => (
               <tr key={c.id}>
                 <td>{c.name}</td>
                 <td className="muted">{c.region}</td>

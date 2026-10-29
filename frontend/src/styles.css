@@ -138,6 +138,8 @@ tr:hover td { background: var(--blue-light); }
   box-shadow: 0 8px 24px rgba(0,0,0,0.12);
 }
 .searchable-select-option { padding: 7px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.searchable-select-group-label { padding: 5px 10px 3px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); border-top: 1px solid var(--border); margin-top: 2px; }
+.searchable-select-group-label:first-child { border-top: none; margin-top: 0; }
 .searchable-select-option.highlighted { background: var(--blue-light); }
 .searchable-select-option.selected { font-weight: 600; }
 
@@ -153,13 +155,13 @@ tr:hover td { background: var(--blue-light); }
 .alert.warning { background: var(--warning-bg); color: var(--warning); }
 .alert.success { background: var(--success-bg); color: var(--success); }
 
-.login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--navy); }
-.login-card { background: #fff; padding: 36px; border-radius: 10px; width: 340px; box-shadow: 0 12px 40px rgba(0,0,0,0.25); }
+.login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--navy); padding: 16px; }
+.login-card { background: #fff; padding: 36px; border-radius: 10px; width: 340px; max-width: 100%; box-shadow: 0 12px 40px rgba(0,0,0,0.25); }
 .login-card img { height: 40px; margin-bottom: 18px; }
 .login-card h2 { margin: 0 0 4px; font-size: 18px; }
 .login-card p { margin: 0 0 20px; color: var(--text-muted); font-size: 13px; }
 
-.toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
 .toolbar h2 { margin: 0; font-size: 17px; }
 
 .muted { color: var(--text-muted); }
@@ -192,3 +194,53 @@ tr:hover td { background: var(--blue-light); }
 }
 .highlight-stats .stat-tile .stat-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
 .highlight-stats .stat-tile .stat-value { font-size: 15px; font-weight: 700; color: var(--navy); margin-top: 2px; }
+
+/* --- Phone/tablet layout --- */
+.hamburger-btn { display: none; }
+.sidebar-backdrop { display: none; }
+
+@media (max-width: 860px) {
+  /* Wide data tables don't try to squeeze into a phone's width - they scroll horizontally
+     within their own row instead of forcing the whole page to scroll sideways or wrapping
+     every cell into an unreadable stack. */
+  .panel > table, table.standalone {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .hamburger-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    font-size: 18px;
+    cursor: pointer;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    width: 250px;
+  }
+  .sidebar.open { transform: translateX(0); }
+
+  .sidebar-backdrop.open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 20, 35, 0.45);
+    z-index: 90;
+  }
+
+  .content { padding: 16px; }
+}

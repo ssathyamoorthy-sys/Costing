@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, openBinary, uploadFile } from '../api';
 import type {
@@ -22,6 +22,7 @@ import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { AiExtractModal } from '../components/AiExtractModal';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { useRecentItems } from '../hooks/useRecentItems';
 
 // Shows a small "AI guessed X" hint only when the AI couldn't confidently match an existing
 // master-data record (matchedId is null) - once a real id is matched, the select is already
@@ -29,6 +30,18 @@ import { SearchableSelect } from '../components/SearchableSelect';
 function aiHint(ref?: AiMatchRef | null): string | null {
   if (!ref || ref.matchedId != null || !ref.guessedText) return null;
   return `AI read: "${ref.guessedText}"`;
+}
+
+// Inline per-field validation message - only shown once the merchandiser has tried to submit
+// an invalid Set form (attemptedSubmit), so a fresh blank form doesn't open already covered in
+// red. Mirrors the exact checks formIsValid() makes, just surfaced next to the specific field.
+function FieldError({ show, message }: { show: boolean; message: string }) {
+  if (!show) return null;
+  return (
+    <div style={{ color: 'var(--danger)', fontSize: 11, marginTop: 2 }}>
+      {message}
+    </div>
+  );
 }
 
 const CURRENCY_SYMBOL: Record<string, string> = { INR: '₹', USD: '$', GBP: '£', EUR: '€' };
@@ -198,6 +211,14 @@ export function QuoteDetailPage() {
 
   const [aiHints, setAiHints] = useState<ExtractionResult | null>(null);
   const [showAiExtractForNewSet, setShowAiExtractForNewSet] = useState(false);
+  // Set once the merchandiser has tried to save an invalid Set form - turns on the inline
+  // per-field error messages below, instead of just silently disabling the submit button (which
+  // gave no clue which of the many fields on a long form was the problem).
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
+
+  const [recentProducts, pushRecentProduct] = useRecentItems('product');
+  const [recentRawMaterials, pushRecentRawMaterial] = useRecentItems('rawMaterial');
+  const [recentHsnCodes, pushRecentHsnCode] = useRecentItems('hsnCode');
 
   function load() {
     api
@@ -242,6 +263,27 @@ export function QuoteDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
+  // Unsaved-changes guard for the Set form: a snapshot of `form` is taken right after the form
+  // opens (or its content is replaced wholesale - loading a template, an AI pre-fill), and
+  // `formDirty` is just whether `form` has since diverged from that snapshot. Warn on tab
+  // close/refresh (beforeunload) - the single biggest risk of silently losing a long form's
+  // worth of typing - and on the form's own Cancel button.
+  const formBaselineRef = useRef<string>('');
+  useEffect(() => {
+    if (showForm) formBaselineRef.current = JSON.stringify(form);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showForm]);
+  const formDirty = showForm && JSON.stringify(form) !== formBaselineRef.current;
+  useEffect(() => {
+    if (!formDirty) return;
+    function handler(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [formDirty]);
+
   if (!quote) return error ? <Alert type="error">{error}</Alert> : <p className="muted">Loading...</p>;
 
   const isOwner = quote.createdById === user?.id;
@@ -275,6 +317,7 @@ export function QuoteDetailPage() {
     setShowYarnEditorSingle(false);
     setSelectedTemplateId('');
     setAiHints(null);
+    setAttemptedSubmit(false);
     setShowForm(true);
   }
 
@@ -303,6 +346,7 @@ export function QuoteDetailPage() {
     setShowYarnEditorSingle(false);
     setSelectedTemplateId('');
     setAiHints(null);
+    setAttemptedSubmit(false);
     setShowForm(true);
   }
 
@@ -391,6 +435,7 @@ export function QuoteDetailPage() {
     setMode(isSingleLine(template.segments) ? 'single' : 'bundle');
     setShowYarnEditorSingle(false);
     setAiHints(null);
+    setAttemptedSubmit(false);
   }
 
   async function saveLineAsTemplate(lineId: number) {
@@ -489,9 +534,11 @@ export function QuoteDetailPage() {
   }
 
   function cancelForm() {
+    if (formDirty && !confirm('Discard your unsaved changes to this set?')) return;
     setShowForm(false);
     setEditingLineId(null);
     setAiHints(null);
+    setAttemptedSubmit(false);
   }
 
   function addSegment() {
@@ -501,6 +548,7 @@ export function QuoteDetailPage() {
     setForm((f) => ({ ...f, segments: f.segments.filter((_, i) => i !== segIdx) }));
   }
   function setSegmentProduct(segIdx: number, productId: number) {
+    if (productId) pushRecentProduct(productId);
     const product = products.find((p) => p.id === productId);
     setForm((f) => ({
       ...f,
@@ -545,6 +593,7 @@ export function QuoteDetailPage() {
     }));
   }
   function updateYarnRow(segIdx: number, rowIdx: number, patch: Partial<FormYarnRow>) {
+    if (patch.rawMaterialId) pushRecentRawMaterial(patch.rawMaterialId);
     setForm((f) => ({
       ...f,
       segments: f.segments.map((seg, i) =>
@@ -567,7 +616,23 @@ export function QuoteDetailPage() {
       segments: f.segments.map((seg, i) => (i === segIdx ? { ...seg, items: seg.items.filter((_, ii) => ii !== itemIdx) } : seg)),
     }));
   }
+  // Clones an item row (size, GSM, HSN, packaging charges - everything) as a new row right
+  // after it - saves retyping when a bundle's next item is near-identical to the one above.
+  function duplicateItem(segIdx: number, itemIdx: number) {
+    setForm((f) => ({
+      ...f,
+      segments: f.segments.map((seg, i) => {
+        if (i !== segIdx) return seg;
+        const source = seg.items[itemIdx];
+        const clone: FormItem = { ...source, packagingCharges: source.packagingCharges.map((p) => ({ ...p })) };
+        const next = [...seg.items];
+        next.splice(itemIdx + 1, 0, clone);
+        return { ...seg, items: next };
+      }),
+    }));
+  }
   function updateItem(segIdx: number, itemIdx: number, patch: Partial<FormItem>) {
+    if (patch.hsnCodeId) pushRecentHsnCode(patch.hsnCodeId);
     setForm((f) => ({
       ...f,
       segments: f.segments.map((seg, i) =>
@@ -653,6 +718,7 @@ export function QuoteDetailPage() {
       setEditingLineId(null);
       setForm(emptySetForm());
       setAiHints(null);
+      setAttemptedSubmit(false);
       load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
@@ -1830,10 +1896,12 @@ export function QuoteDetailPage() {
                   <option key={c.id} value={c.color} />
                 ))}
               </datalist>
+              <FieldError show={attemptedSubmit && !form.color} message="Color is required." />
             </div>
             <div className="field">
               <label>{mode === 'single' ? 'Qty (pcs)' : 'Sets ordered'}</label>
               <input type="number" value={form.qtySets} onChange={(e) => setForm({ ...form, qtySets: e.target.value })} />
+              <FieldError show={attemptedSubmit && !form.qtySets} message="Quantity is required." />
             </div>
             <div className="field">
               <label>Target price (optional)</label>
@@ -1865,12 +1933,14 @@ export function QuoteDetailPage() {
                   value={seg.productId}
                   onChange={(v) => setSegmentProduct(segIdx, Number(v))}
                   options={products.map((p) => ({ value: p.id, label: p.code, sublabel: p.name ?? undefined }))}
+                  recentValues={recentProducts}
                 />
                 {aiHint(aiHints?.segments[segIdx]?.product) && (
                   <span className="muted" style={{ fontSize: 12 }}>
                     {aiHint(aiHints?.segments[segIdx]?.product)}
                   </span>
                 )}
+                <FieldError show={attemptedSubmit && !seg.productId} message="Pick a product." />
               </div>
 
               {mode === 'bundle' || showYarnEditorSingle ? (
@@ -1917,6 +1987,7 @@ export function QuoteDetailPage() {
                                 value={row.rawMaterialId}
                                 onChange={(v) => updateYarnRow(segIdx, rowIdx, { rawMaterialId: v === '' ? '' : Number(v) })}
                                 options={rawMaterials.map((m) => ({ value: m.id, label: m.code, sublabel: m.description ?? undefined }))}
+                                recentValues={recentRawMaterials}
                                 style={{ minWidth: 140 }}
                               />
                               {aiHint(aiHints?.segments[segIdx]?.yarnComponents[rowIdx]?.rawMaterial) && (
@@ -1924,6 +1995,7 @@ export function QuoteDetailPage() {
                                   {aiHint(aiHints?.segments[segIdx]?.yarnComponents[rowIdx]?.rawMaterial)}
                                 </div>
                               )}
+                              <FieldError show={attemptedSubmit && !row.rawMaterialId} message="Pick a raw material." />
                             </td>
                             <td className="right">
                               <input
@@ -2015,6 +2087,7 @@ export function QuoteDetailPage() {
                             {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.itemType)}
                           </span>
                         )}
+                        <FieldError show={attemptedSubmit && !item.itemTypeId} message="Pick an item type." />
                       </div>
                       {itemTypes.find((t) => t.id === item.itemTypeId)?.sizingMethod === 'FABRIC_CONSUMPTION' ? (
                         <div className="field">
@@ -2024,22 +2097,26 @@ export function QuoteDetailPage() {
                             value={item.fabricConsumptionSqm}
                             onChange={(e) => updateItem(segIdx, itemIdx, { fabricConsumptionSqm: e.target.value })}
                           />
+                          <FieldError show={attemptedSubmit && !item.fabricConsumptionSqm} message="Fabric consumption is required." />
                         </div>
                       ) : (
                         <>
                           <div className="field">
                             <label>Length (cm)</label>
                             <input type="number" value={item.lengthCm} onChange={(e) => updateItem(segIdx, itemIdx, { lengthCm: e.target.value })} />
+                            <FieldError show={attemptedSubmit && !item.lengthCm} message="Length is required." />
                           </div>
                           <div className="field">
                             <label>Width (cm)</label>
                             <input type="number" value={item.widthCm} onChange={(e) => updateItem(segIdx, itemIdx, { widthCm: e.target.value })} />
+                            <FieldError show={attemptedSubmit && !item.widthCm} message="Width is required." />
                           </div>
                         </>
                       )}
                       <div className="field">
                         <label>GSM</label>
                         <input type="number" value={item.gsm} onChange={(e) => updateItem(segIdx, itemIdx, { gsm: e.target.value })} />
+                        <FieldError show={attemptedSubmit && !item.gsm} message="GSM is required." />
                       </div>
                       <div className="field">
                         <label>HSN Code (Duty Drawback)</label>
@@ -2047,6 +2124,7 @@ export function QuoteDetailPage() {
                           value={item.hsnCodeId}
                           onChange={(v) => updateItem(segIdx, itemIdx, { hsnCodeId: v === '' ? '' : Number(v) })}
                           options={hsnCodes.map((h) => ({ value: h.id, label: h.hsCode, sublabel: h.description }))}
+                          recentValues={recentHsnCodes}
                           placeholder="None"
                         />
                         {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.hsnCode) && (
@@ -2059,14 +2137,22 @@ export function QuoteDetailPage() {
                         <div className="field">
                           <label>Qty / Set</label>
                           <input type="number" value={item.qtyPerSet} onChange={(e) => updateItem(segIdx, itemIdx, { qtyPerSet: e.target.value })} />
+                          <FieldError show={attemptedSubmit && !item.qtyPerSet} message="Quantity is required." />
                         </div>
                       )}
-                      {seg.items.length > 1 && (
+                      {mode === 'bundle' && (
                         <div className="field" style={{ justifyContent: 'flex-end' }}>
                           <label>&nbsp;</label>
-                          <button className="btn small danger" onClick={() => removeItem(segIdx, itemIdx)}>
-                            Remove item
-                          </button>
+                          <div className="tag-row">
+                            <button className="btn small" title="Clone this item as a new row" onClick={() => duplicateItem(segIdx, itemIdx)}>
+                              Duplicate
+                            </button>
+                            {seg.items.length > 1 && (
+                              <button className="btn small danger" onClick={() => removeItem(segIdx, itemIdx)}>
+                                Remove item
+                              </button>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2119,7 +2205,16 @@ export function QuoteDetailPage() {
             <button className="btn" onClick={cancelForm}>
               Cancel
             </button>
-            <button className="btn primary" onClick={submitSet} disabled={!formIsValid()}>
+            <button
+              className="btn primary"
+              onClick={() => {
+                if (!formIsValid()) {
+                  setAttemptedSubmit(true);
+                  return;
+                }
+                submitSet();
+              }}
+            >
               {editingLineId ? 'Save set' : 'Add set'}
             </button>
           </div>
