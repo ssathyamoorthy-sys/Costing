@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { computeSet, type SegmentInput } from '../costing/computeSet';
+import { computeFreightAllocation } from '../costing/freightAllocation';
 import { resolveCurrentRate } from '../lib/rates';
 import { notifyRole, notifyUser } from '../lib/notify';
 import { generateQuotePdf } from '../pdf/quotePdf';
@@ -71,6 +72,7 @@ async function recomputeLine(quoteLineId: number) {
   const result = await computeSet({
     quoteId: line.quoteId,
     color: line.color,
+    qtySets: line.qtySets,
     quoteLineId,
     segments: allSegments.map((s) => ({
       productId: s.productId,
@@ -240,6 +242,12 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
   if (visErr) return res.status(visErr.status).json({ error: visErr.error });
 
   const currency = quote.currency;
+  const freight = computeFreightAllocation({
+    incoterm: quote.incoterm,
+    containerCostTotal: quote.containerCostTotal,
+    freightTerms: quote.freightTerms,
+    lines: quote.lines,
+  });
   const columns = [
     { header: 'Set #', key: 'setNo', width: 8 },
     { header: 'Item', key: 'item', width: 16 },
@@ -252,6 +260,7 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
     { header: 'Article Ref', key: 'articleRef', width: 16 },
     { header: 'Qty/Set', key: 'qtyPerSet', width: 10 },
     { header: `Rate/Pc (${currency})`, key: 'ratePc', width: 14, numFmt: '#,##0.0000' },
+    ...(freight.applies ? [{ header: `Freight/Pc (${currency})`, key: 'freightPc', width: 14, numFmt: '#,##0.0000' }] : []),
   ];
 
   const rows: Record<string, unknown>[] = [];
@@ -275,6 +284,7 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
           articleRef: line.articleRef || '',
           qtyPerSet: isSingle ? `${line.qtySets} pcs` : item.qtyPerSet,
           ratePc: breakup?.ratePerPiece?.[currency] ?? '',
+          ...(freight.applies ? { freightPc: freight.perPiece(item.pieceWeightGrams) } : {}),
         });
       }
     }
@@ -775,11 +785,17 @@ quotesRouter.post('/ai-extract', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMI
   }
 });
 
-// Owner (while still DRAFT) or Supervisor/Admin: edit purely informational quote metadata -
-// never touches pricing, so it's allowed even on a locked quote.
+// Owner (while still DRAFT) or Supervisor/Admin: edit quote metadata. customerEnquiryNo/
+// validityDate are purely informational (never touch pricing, allowed even on a locked
+// quote); freightTerms/incoterm/containerCostTotal drive the landed-price freight
+// allocation (see freightAllocation.ts) and are blocked once the quote is locked, same as
+// any other price-affecting change.
 const detailsSchema = z.object({
   customerEnquiryNo: z.string().nullable().optional(),
   validityDate: z.string().nullable().optional(),
+  freightTerms: z.string().nullable().optional(),
+  incoterm: z.enum(['FOB', 'CFR', 'CIF', 'DOOR_DELIVERY']).nullable().optional(),
+  containerCostTotal: z.number().nonnegative().nullable().optional(),
 });
 
 quotesRouter.put('/:id/details', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
@@ -791,11 +807,19 @@ quotesRouter.put('/:id/details', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMI
   const check = await assertEditableByOwner(quoteId, req.user!.userId, isSupervisor);
   if (!check.ok) return res.status(check.status).json({ error: check.error });
 
+  if (parsed.data.incoterm !== undefined || parsed.data.containerCostTotal !== undefined || parsed.data.freightTerms !== undefined) {
+    const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+    if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+  }
+
   const quote = await prisma.quote.update({
     where: { id: quoteId },
     data: {
       customerEnquiryNo: parsed.data.customerEnquiryNo === undefined ? undefined : parsed.data.customerEnquiryNo || null,
       validityDate: parsed.data.validityDate === undefined ? undefined : parsed.data.validityDate ? new Date(parsed.data.validityDate) : null,
+      freightTerms: parsed.data.freightTerms === undefined ? undefined : parsed.data.freightTerms || null,
+      incoterm: parsed.data.incoterm === undefined ? undefined : parsed.data.incoterm,
+      containerCostTotal: parsed.data.containerCostTotal === undefined ? undefined : parsed.data.containerCostTotal,
     },
   });
   res.json(quote);
@@ -896,7 +920,7 @@ quotesRouter.post('/:id/lines', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
-    const result = await computeSet({ quoteId, color: parsed.data.color, segments: parsed.data.segments as SegmentInput[] });
+    const result = await computeSet({ quoteId, color: parsed.data.color, qtySets: parsed.data.qtySets, segments: parsed.data.segments as SegmentInput[] });
 
     const line = await prisma.quoteLine.create({
       data: {
@@ -941,6 +965,7 @@ quotesRouter.put('/:id/lines/:lineId', requireRole('MERCHANDISER', 'SUPERVISOR',
     const result = await computeSet({
       quoteId,
       color: parsed.data.color,
+      qtySets: parsed.data.qtySets,
       segments: parsed.data.segments as SegmentInput[],
       quoteLineId: lineId,
     });
@@ -988,6 +1013,7 @@ const saveAsTemplateSchema = z.object({ name: z.string().min(1) });
 
 type LineWithSegmentsForTemplate = {
   color: string;
+  articleRef: string | null;
   qtySets: number;
   segments: {
     productId: number;
@@ -1038,6 +1064,7 @@ async function createTemplateFromLine(line: LineWithSegmentsForTemplate, custome
       customerId,
       name,
       color: line.color,
+      articleRef: line.articleRef,
       qtySets: line.qtySets,
       createdById,
       segments: { create: segmentsCreateInputForTemplate(line) },
@@ -1054,6 +1081,7 @@ async function overwriteTemplateFromLine(templateId: number, line: LineWithSegme
     where: { id: templateId },
     data: {
       color: line.color,
+      articleRef: line.articleRef,
       qtySets: line.qtySets,
       segments: { create: segmentsCreateInputForTemplate(line) },
     },

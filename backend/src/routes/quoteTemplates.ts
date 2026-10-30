@@ -34,7 +34,7 @@ quoteTemplatesRouter.get('/', async (req, res) => {
   const templates = await prisma.quoteTemplate.findMany({
     where: { customerId, ...(standaloneOnly ? { groupMemberships: { none: {} } } : {}) },
     orderBy: { name: 'asc' },
-    select: { id: true, name: true, color: true, qtySets: true, createdAt: true, createdBy: { select: { name: true } } },
+    select: { id: true, name: true, color: true, articleRef: true, qtySets: true, createdAt: true, createdBy: { select: { name: true } } },
   });
   res.json(templates);
 });

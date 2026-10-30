@@ -175,6 +175,7 @@ export function TemplatesPage() {
                 <tr>
                   <th>Name</th>
                   <th>Color</th>
+                  <th>Article Ref</th>
                   <th className="right">Qty Sets</th>
                   <th>Created by</th>
                   <th>Created</th>
@@ -204,6 +205,7 @@ export function TemplatesPage() {
                         {!(renaming?.kind === 'template' && renaming.id === t.id) && t.name}
                       </td>
                       <td className="muted">{t.color}</td>
+                      <td className="muted">{t.articleRef}</td>
                       <td className="right mono">{t.qtySets}</td>
                       <td className="muted">{t.createdBy?.name}</td>
                       <td className="muted">{new Date(t.createdAt).toLocaleDateString()}</td>
@@ -222,14 +224,14 @@ export function TemplatesPage() {
                     </tr>
                     {expanded?.kind === 'template' && expanded.id === t.id && expandedTemplate && (
                       <tr>
-                        <td colSpan={canEdit ? 6 : 5}>{templateContents(expandedTemplate)}</td>
+                        <td colSpan={canEdit ? 7 : 6}>{templateContents(expandedTemplate)}</td>
                       </tr>
                     )}
                   </Fragment>
                 ))}
                 {templates.length === 0 && (
                   <tr>
-                    <td colSpan={canEdit ? 6 : 5} className="muted">
+                    <td colSpan={canEdit ? 7 : 6} className="muted">
                       No single-set templates saved for this customer yet.
                     </td>
                   </tr>

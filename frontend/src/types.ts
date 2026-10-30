@@ -102,6 +102,8 @@ export interface Product {
   // Color method: PIECE_DYED (default, flat Processing Charge after weaving) or
   // YARN_DYED (yarn dyed per-slot before weaving, washed after weaving instead).
   colorMethod: ColorMethod;
+  // YARN_DYED only: per-product override of the general "yarn-dyed MOQ (Kg)" setting.
+  yarnDyedMoqKgOverride?: number | null;
   yarnDyeingProcessLossPct: number;
   washingCostPerKg: number;
   washingLossPct: number;
@@ -251,6 +253,8 @@ export interface QuoteLine {
   segments: QuoteLineSegment[];
 }
 
+export type Incoterm = 'FOB' | 'CFR' | 'CIF' | 'DOOR_DELIVERY';
+
 export interface Quote {
   id: number;
   quoteNo: string;
@@ -265,6 +269,12 @@ export interface Quote {
   validityDate?: string | null;
   paymentTerms?: string | null;
   freightTerms?: string | null;
+  // FOB / CFR / CIF / DOOR_DELIVERY - null behaves like the historical FOB-only default
+  // (plain freightTerms text, no container-cost allocation). See lib/freightAllocation.ts.
+  incoterm?: Incoterm | null;
+  // Total shipping/container cost for the whole quote, in this quote's own currency - only
+  // meaningful when incoterm is CFR/CIF/DOOR_DELIVERY.
+  containerCostTotal?: number | null;
   currency: Currency;
   marginPctOverride?: number | null;
   commissionPctOverride?: number | null;
@@ -313,6 +323,7 @@ export interface QuoteTemplateSummary {
   id: number;
   name: string;
   color: string;
+  articleRef?: string | null;
   qtySets: number;
   createdAt: string;
   createdBy?: { name: string };

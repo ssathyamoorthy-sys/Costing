@@ -222,6 +222,18 @@ async function main() {
     create: { key: 'freightExportPerKg', value: '13' },
   });
 
+  console.log('Seeding general settings (yarn-dyed MOQ)...');
+  await prisma.generalSetting.upsert({
+    where: { key: 'yarnDyedMoqKg' },
+    update: {},
+    create: { key: 'yarnDyedMoqKg', value: '1000' },
+  });
+  await prisma.generalSetting.upsert({
+    where: { key: 'moqShortfallRejectionPct' },
+    update: {},
+    create: { key: 'moqShortfallRejectionPct', value: '0.05' },
+  });
+
   console.log('Done. Seeded users (username / password):');
   console.log('  admin / ChangeMe123!');
   console.log('  supervisor / ChangeMe123!');

@@ -47,6 +47,9 @@ export interface SetInput {
   quoteId: number;
   color: string;
   segments: SegmentInput[];
+  // Total sets ordered - needed to turn one set's worth of Kg (qtyKg below) into the whole
+  // order's weight, for the yarn-dyed MOQ check (see below).
+  qtySets: number;
   // when recomputing an existing set (edits, material overrides), pass the existing line id
   // so per-segment material overrides already on file are picked up
   quoteLineId?: number;
@@ -66,6 +69,36 @@ export interface SetComputationResult {
   segments: ComputedSegment[];
   ratePerSet: Record<string, number>; // combined set price = sum of (item unit ratePerPiece * qtyPerSet)
   warnings: string[];
+}
+
+export interface MoqCheckResult {
+  underMoq: boolean;
+  effectiveRejectionPct: number;
+  warning: string | null;
+}
+
+/**
+ * Pure decision for the yarn-dyed MOQ surcharge - isolated from the DB-aware costing loop
+ * below so it's unit-testable on its own (see computeSet.test.ts). `moqThreshold: null`
+ * means neither a per-product override nor the general setting is configured, so the rule
+ * doesn't apply.
+ */
+export function checkYarnDyedMoq(params: {
+  productCode: string;
+  segmentTotalKg: number;
+  moqThreshold: number | null;
+  baseRejectionPct: number;
+  moqShortfallRejectionPct: number;
+}): MoqCheckResult {
+  const { productCode, segmentTotalKg, moqThreshold, baseRejectionPct, moqShortfallRejectionPct } = params;
+  if (moqThreshold == null || segmentTotalKg >= moqThreshold) {
+    return { underMoq: false, effectiveRejectionPct: baseRejectionPct, warning: null };
+  }
+  return {
+    underMoq: true,
+    effectiveRejectionPct: baseRejectionPct + moqShortfallRejectionPct,
+    warning: `Segment '${productCode}': order is ${segmentTotalKg.toFixed(0)}kg, below the ${moqThreshold}kg yarn-dyed MOQ - an extra ${(moqShortfallRejectionPct * 100).toFixed(1)}% rejection cost has been added to this segment's price.`,
+  };
 }
 
 /**
@@ -92,6 +125,14 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
     warnings.push('No "freightExportPerKg" general setting configured yet - export freight costed as 0/kg.');
   }
   const freightExportPerKg = quote.freightExportPerKgOverride ?? masterFreightExportPerKg;
+
+  // Yarn-dyed MOQ: general, admin-configurable defaults (General Mapping) - see the
+  // per-segment check below. Absent entirely (no setting, no per-product override) simply
+  // means the rule doesn't apply yet, no warning needed (unlike freight, this is opt-in).
+  const moqKgSetting = await prisma.generalSetting.findUnique({ where: { key: 'yarnDyedMoqKg' } });
+  const generalMoqKg = moqKgSetting ? Number(moqKgSetting.value) : null;
+  const moqRejectionSetting = await prisma.generalSetting.findUnique({ where: { key: 'moqShortfallRejectionPct' } });
+  const moqShortfallRejectionPct = moqRejectionSetting ? Number(moqRejectionSetting.value) : 0;
 
   const allRates = await getCurrentExchangeRates();
   const exchangeRates: Record<string, number> = { INR: 1 };
@@ -176,8 +217,12 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
       resolvedYarn.push({ slot: c.slot, mixingPct: c.mixingPct, pricePerKg: resolved.pricePerKg, dyeingCostPerKg });
     }
 
-    const computedItems: ComputedItem[] = [];
-    for (const itemInput of segInput.items) {
+    // Builds one item's ComputedItem for a given effective rejection % - pulled out of the
+    // plain per-item loop so the yarn-dyed MOQ check below can call it twice for the same
+    // segment: once with the Product's normal rejectionPct (to learn the segment's real
+    // finished-weight total), and - only if that total is under MOQ - again with the
+    // shortfall surcharge added, replacing the first pass's results for this segment.
+    const buildComputedItem = async (itemInput: ItemInput, effectiveRejectionPct: number): Promise<ComputedItem> => {
       const itemType = await prisma.itemType.findUnique({ where: { id: itemInput.itemTypeId } });
       if (!itemType) throw new Error(`Item type ${itemInput.itemTypeId} not found`);
 
@@ -218,7 +263,7 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         secondVelourCharges,
         secondVelourLossPct: product.secondVelourLossPct,
         transportLocalPerKg,
-        rejectionPct: product.rejectionPct,
+        rejectionPct: effectiveRejectionPct,
         secondRejectionPct: product.secondRejectionPct,
         yarnComponents: resolvedYarn,
         processingChargeRatePerKg,
@@ -254,7 +299,7 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         profitInclDbk[currency] = (perKg * breakup.pieceWeightGrams) / 1000;
       }
 
-      computedItems.push({
+      return {
         ...itemInput,
         pieceWeightGrams: breakup.pieceWeightGrams,
         qtyKg: breakup.qtyKg,
@@ -269,7 +314,37 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
           marginPct,
           effectiveMarginPctInclDbk: marginPct + totalIncentivePct,
         },
+      };
+    };
+
+    let computedItems: ComputedItem[] = [];
+    for (const itemInput of segInput.items) {
+      computedItems.push(await buildComputedItem(itemInput, product.rejectionPct));
+    }
+
+    // Yarn-dyed MOQ: a dye house won't run a small batch without extra wastage, so an order
+    // under the effective MOQ (in finished-product Kg, a close proxy for yarn consumed -
+    // see SetInput.qtySets doc comment) gets re-costed with the shortfall surcharge folded
+    // into this segment's rejection %. Uses the real qtyKg from the pass above, which is
+    // purely geometric (L x W x GSM) and doesn't depend on rejectionPct, so there's no
+    // circularity in computing it before deciding whether to bump rejectionPct.
+    if (isYarnDyed) {
+      const segmentTotalKg = computedItems.reduce((s, it) => s + it.qtyKg * input.qtySets, 0);
+      const moq = checkYarnDyedMoq({
+        productCode: product.code,
+        segmentTotalKg,
+        moqThreshold: product.yarnDyedMoqKgOverride ?? generalMoqKg,
+        baseRejectionPct: product.rejectionPct,
+        moqShortfallRejectionPct,
       });
+      if (moq.underMoq) {
+        const recomputed: ComputedItem[] = [];
+        for (const itemInput of segInput.items) {
+          recomputed.push(await buildComputedItem(itemInput, moq.effectiveRejectionPct));
+        }
+        computedItems = recomputed;
+        if (moq.warning) warnings.push(moq.warning);
+      }
     }
 
     computedSegments.push({ productId: segInput.productId, yarnComponents: segInput.yarnComponents, items: computedItems });

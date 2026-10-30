@@ -131,6 +131,11 @@ model Product {
   yarnDyeingProcessLossPct   Float  @default(0)
   washingCostPerKg           Float  @default(0)
   washingLossPct             Float  @default(0)
+  // YARN_DYED only: overrides the general "yarnDyedMoqKg" setting (General Mapping) with a
+  // dye-house MOQ specific to this article, in finished-product Kg. Null = use the general
+  // default. An order under the effective threshold gets the general "moqShortfallRejectionPct"
+  // added to rejectionPct for that segment - see computeSet.ts.
+  yarnDyedMoqKgOverride      Float?
 
   active                 Boolean  @default(true)
   createdAt              DateTime @default(now())
@@ -244,7 +249,20 @@ model Quote {
   remarks       String?
   validityDate  DateTime?
   paymentTerms  String?
+  // Supporting free text for the incoterm below (port of discharge, delivery address, etc.) -
+  // on quotes created before the incoterm field existed, this is the whole freight-terms
+  // string shown as-is.
   freightTerms  String?
+  // FOB / CFR / CIF / DOOR_DELIVERY - null behaves exactly like the historical FOB-only
+  // default (plain freightTerms text, no container-cost allocation). See
+  // backend/src/costing/freightAllocation.ts.
+  incoterm      String?
+  // Total shipping/container cost for the whole quote, in this quote's own currency - only
+  // meaningful when incoterm is CFR/CIF/DOOR_DELIVERY. Allocated across every piece in the
+  // quote proportional to weight at render time (PDF/Excel/quote page) - never persisted
+  // into any line's costBreakupJson, since it depends on every line in the quote, not just
+  // one (see freightAllocation.ts for why).
+  containerCostTotal Float?
   // Single currency for this quote, copied from the customer's currency at creation time
   // (Domestic (India) customers are always INR - enforced on the Customer record itself).
   currency      String      @default("INR")
@@ -465,6 +483,9 @@ model QuoteTemplate {
   customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   name        String
   color       String
+  // Customer's article/style reference, carried over from the QuoteLine this template was
+  // saved from - see QuoteLine.articleRef. Independently editable from the template name.
+  articleRef  String?
   qtySets     Int      @default(1)
   createdById Int
   createdBy   User     @relation(fields: [createdById], references: [id])

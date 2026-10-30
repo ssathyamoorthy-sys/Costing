@@ -6,6 +6,7 @@ import type {
   CostingBreakup,
   ExtractionResult,
   HsnCode,
+  Incoterm,
   ItemType,
   Product,
   ProcessingCharge,
@@ -23,6 +24,7 @@ import { Alert } from '../components/Alert';
 import { AiExtractModal } from '../components/AiExtractModal';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { useRecentItems } from '../hooks/useRecentItems';
+import { ALLOCATED_INCOTERMS, INCOTERM_LABELS, computeFreightAllocation } from '../lib/freightAllocation';
 
 // Shows a small "AI guessed X" hint only when the AI couldn't confidently match an existing
 // master-data record (matchedId is null) - once a real id is matched, the select is already
@@ -209,6 +211,13 @@ export function QuoteDetailPage() {
 
   const [editingEnquiryNo, setEditingEnquiryNo] = useState(false);
   const [enquiryNoInput, setEnquiryNoInput] = useState('');
+
+  const [editingShipping, setEditingShipping] = useState(false);
+  const [shippingForm, setShippingForm] = useState<{ incoterm: '' | Incoterm; freightTerms: string; containerCostTotal: string }>({
+    incoterm: '',
+    freightTerms: '',
+    containerCostTotal: '',
+  });
 
   const [aiHints, setAiHints] = useState<ExtractionResult | null>(null);
   const [showAiExtractForNewSet, setShowAiExtractForNewSet] = useState(false);
@@ -418,7 +427,7 @@ export function QuoteDetailPage() {
     const template = await api.get<QuoteTemplate>(`/quote-templates/${templateId}`);
     setForm({
       color: template.color,
-      articleRef: template.name,
+      articleRef: template.articleRef ?? template.name,
       qtySets: String(template.qtySets),
       targetPrice: '',
       segments: template.segments.map((seg) => ({
@@ -510,7 +519,7 @@ export function QuoteDetailPage() {
       for (const template of group.templates) {
         const payload = {
           color: template.color,
-          articleRef: template.name,
+          articleRef: template.articleRef ?? template.name,
           qtySets: template.qtySets,
           segments: template.segments.map((seg) => ({
             productId: seg.productId,
@@ -961,6 +970,29 @@ export function QuoteDetailPage() {
     }
   }
 
+  function openShippingEditor() {
+    setShippingForm({
+      incoterm: quote!.incoterm ?? '',
+      freightTerms: quote!.freightTerms || '',
+      containerCostTotal: quote!.containerCostTotal != null ? String(quote!.containerCostTotal) : '',
+    });
+    setEditingShipping(true);
+  }
+
+  async function saveShipping() {
+    try {
+      await api.put(`/quotes/${quote!.id}/details`, {
+        incoterm: shippingForm.incoterm || null,
+        freightTerms: shippingForm.freightTerms || null,
+        containerCostTotal: shippingForm.containerCostTotal ? Number(shippingForm.containerCostTotal) : null,
+      });
+      setEditingShipping(false);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   function segmentMixingTotal(seg: FormSegment) {
     return seg.yarnComponents.reduce((s, r) => s + (Number(r.mixingPct) || 0), 0);
   }
@@ -1011,6 +1043,13 @@ export function QuoteDetailPage() {
     if (!anyPriced) return null;
     return { totalRevenue, totalMargin, blendedPct: totalRevenue > 0 ? totalMargin / totalRevenue : 0 };
   }
+
+  const freight = computeFreightAllocation({
+    incoterm: quote.incoterm,
+    containerCostTotal: quote.containerCostTotal,
+    freightTerms: quote.freightTerms,
+    lines: quote.lines,
+  });
 
   return (
     <div>
@@ -1215,7 +1254,17 @@ export function QuoteDetailPage() {
             <div className="muted" style={{ fontSize: 12 }}>
               Freight Terms
             </div>
-            {quote.freightTerms || '-'}
+            {freight.termsLabel || quote.freightTerms || '-'}
+            {quote.incoterm && ALLOCATED_INCOTERMS.includes(quote.incoterm) && quote.containerCostTotal != null && (
+              <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>
+                (container cost {quote.containerCostTotal.toLocaleString()} {quote.currency})
+              </span>
+            )}
+            {!editingShipping && ((quote.status === 'DRAFT' && isOwner && isMerchandiser) || isSupervisor) && (
+              <button className="btn small" onClick={openShippingEditor} style={{ marginLeft: 6 }}>
+                Edit
+              </button>
+            )}
           </div>
           <div>
             <div className="muted" style={{ fontSize: 12 }}>
@@ -1224,6 +1273,52 @@ export function QuoteDetailPage() {
             {quote.createdBy?.name}
           </div>
         </div>
+
+        {editingShipping && (
+          <div className="form-grid" style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+            <div className="field">
+              <label>Incoterm</label>
+              <select
+                value={shippingForm.incoterm}
+                onChange={(e) => setShippingForm({ ...shippingForm, incoterm: e.target.value as '' | Incoterm })}
+              >
+                <option value="">FOB (default)</option>
+                {ALLOCATED_INCOTERMS.map((it) => (
+                  <option key={it} value={it}>
+                    {INCOTERM_LABELS[it]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>{shippingForm.incoterm === 'DOOR_DELIVERY' ? 'Delivery address' : 'Port of discharge / freight terms'}</label>
+              <input
+                value={shippingForm.freightTerms}
+                onChange={(e) => setShippingForm({ ...shippingForm, freightTerms: e.target.value })}
+              />
+            </div>
+            {shippingForm.incoterm && ALLOCATED_INCOTERMS.includes(shippingForm.incoterm) && (
+              <div className="field">
+                <label>Container cost, total ({quote.currency})</label>
+                <input
+                  type="number"
+                  value={shippingForm.containerCostTotal}
+                  onChange={(e) => setShippingForm({ ...shippingForm, containerCostTotal: e.target.value })}
+                />
+              </div>
+            )}
+            <div className="field" style={{ alignSelf: 'end' }}>
+              <div className="tag-row">
+                <button className="btn small primary" onClick={saveShipping}>
+                  Save
+                </button>
+                <button className="btn small" onClick={() => setEditingShipping(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {revisions.length > 0 && (
@@ -1462,6 +1557,11 @@ export function QuoteDetailPage() {
           (sum, seg) => sum + seg.items.reduce((s, it) => s + (it.qtyKg ?? 0), 0),
           0,
         ) * line.qtySets;
+        // Container freight for one set's worth of pieces (one piece's allocation x how many
+        // pieces of it go into a set) - matches the "Combined price / set" row below.
+        const lineFreightPerSet = freight.applies
+          ? line.segments.reduce((sum, seg) => sum + seg.items.reduce((s, it) => s + freight.perPiece(it.pieceWeightGrams) * it.qtyPerSet, 0), 0)
+          : 0;
 
         function segmentDetail(seg: (typeof line.segments)[number]) {
           const segLabel = seg.product?.name || seg.product?.code || `Product ${seg.productId}`;
@@ -1484,12 +1584,14 @@ export function QuoteDetailPage() {
                       <th className="right">Qty/Set</th>
                       <th className="right">Qty in Kg</th>
                       <th className="right">Rate/Pc</th>
+                      {freight.applies && <th className="right">Freight/Pc</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {seg.items.map((item) => {
                       const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
                       const totalKg = item.qtyKg != null ? item.qtyKg * line.qtySets : null;
+                      const freightPc = freight.perPiece(item.pieceWeightGrams);
                       return (
                         <Fragment key={item.id}>
                           <tr>
@@ -1499,10 +1601,11 @@ export function QuoteDetailPage() {
                             <td className="right mono">{item.qtyPerSet}</td>
                             <td className="right mono">{totalKg != null ? totalKg.toFixed(2) : '-'}</td>
                             <td className="right mono">{b?.ratePerPiece?.[currency] != null ? `${symbol}${b.ratePerPiece[currency].toFixed(4)}` : '-'}</td>
+                            {freight.applies && <td className="right mono">{`${symbol}${freightPc.toFixed(4)}`}</td>}
                           </tr>
                           {item.packagingCharges.length > 0 && (
                             <tr>
-                              <td colSpan={6} className="muted" style={{ fontSize: 12 }}>
+                              <td colSpan={freight.applies ? 7 : 6} className="muted" style={{ fontSize: 12 }}>
                                 + Packaging: {item.packagingCharges.map((p) => `${p.description} (₹${p.ratePerPiece}/pc)`).join(', ')}
                               </td>
                             </tr>
@@ -1719,12 +1822,20 @@ export function QuoteDetailPage() {
                   <td>{isSingle ? 'Rate / Piece' : 'Combined price / set'}</td>
                   <td className="right mono">{ratePerSet != null ? `${symbol}${ratePerSet.toFixed(4)}` : '-'}</td>
                 </tr>
+                {freight.applies && (
+                  <tr>
+                    <td className="muted">+ Freight ({INCOTERM_LABELS[quote.incoterm as Incoterm]})</td>
+                    <td className="right mono muted">{`${symbol}${lineFreightPerSet.toFixed(4)}`}</td>
+                  </tr>
+                )}
                 <tr>
                   <td>
                     Total for {line.qtySets.toLocaleString()} {isSingle ? 'pcs' : 'set(s)'}
                     <span className="muted"> ({lineTotalKg.toFixed(2)} kg)</span>
                   </td>
-                  <td className="right mono">{ratePerSet != null ? `${symbol}${(ratePerSet * line.qtySets).toFixed(2)}` : '-'}</td>
+                  <td className="right mono">
+                    {ratePerSet != null ? `${symbol}${((ratePerSet + lineFreightPerSet) * line.qtySets).toFixed(2)}` : '-'}
+                  </td>
                 </tr>
               </tbody>
             </table>

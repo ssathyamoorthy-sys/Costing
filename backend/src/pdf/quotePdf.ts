@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import type { CostingBreakup } from '../costing/engine';
+import { computeFreightAllocation } from '../costing/freightAllocation';
 
 const LOGO_PATH = path.join(__dirname, '..', '..', '..', 'assets', 'logo', 'adwaith-lakshmi-logo.jpg');
 
@@ -13,6 +14,8 @@ interface QuoteForPdf {
   validityDate: Date | null;
   paymentTerms: string | null;
   freightTerms: string | null;
+  incoterm: string | null;
+  containerCostTotal: number | null;
   currency: string;
   createdAt: Date;
   customer: { name: string };
@@ -30,6 +33,7 @@ interface QuoteForPdf {
         gsm: number;
         qtyPerSet: number;
         qtyKg: number | null;
+        pieceWeightGrams: number | null;
         costBreakupJson: string | null;
       }[];
     }[];
@@ -59,6 +63,12 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
   const currency = quote.currency;
   const symbol = CURRENCY_SYMBOL[currency] || '';
+  const freight = computeFreightAllocation({
+    incoterm: quote.incoterm,
+    containerCostTotal: quote.containerCostTotal,
+    freightTerms: quote.freightTerms,
+    lines: quote.lines,
+  });
 
   // --- Letterhead ---
   try {
@@ -112,17 +122,19 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   // grand-total footer row.
   const cols = [
     { key: 'item', label: 'Item', width: 55 },
-    { key: 'quality', label: 'Quality', width: 75 },
-    { key: 'pileYarn', label: 'Pile Yarn', width: 65 },
+    { key: 'quality', label: 'Quality', width: freight.applies ? 60 : 75 },
+    { key: 'pileYarn', label: 'Pile Yarn', width: freight.applies ? 50 : 65 },
     { key: 'size', label: 'Size (cm)', width: 45 },
     { key: 'gsm', label: 'GSM', width: 25 },
     { key: 'color', label: 'Color', width: 35 },
     { key: 'qty', label: 'Qty', width: 35, align: 'right' as const },
     { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 55, align: 'right' as const },
+    ...(freight.applies ? [{ key: 'freightPc', label: `Freight/Pc (${currency})`, width: 50, align: 'right' as const }] : []),
     { key: 'totalKg', label: 'Total Qty in Kg', width: 60, align: 'right' as const },
     { key: 'totalValue', label: 'Total Value', width: 60, align: 'right' as const },
   ];
   const tableWidth = cols.reduce((s, c) => s + c.width, 0);
+  const colW = (key: string) => cols.find((c) => c.key === key)!.width;
 
   let y = headerY + 14;
   const pageBottom = 760;
@@ -153,9 +165,10 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
       for (const item of seg.items) {
         const breakup: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
         const ratePc = breakup?.ratePerPiece?.[currency];
+        const freightPc = freight.perPiece(item.pieceWeightGrams);
         const qty = line.qtySets * item.qtyPerSet;
         const totalKg = (item.qtyKg ?? 0) * line.qtySets;
-        const totalValue = ratePc != null ? ratePc * qty : null;
+        const totalValue = ratePc != null ? (ratePc + freightPc) * qty : null;
 
         grandQty += qty;
         grandKg += totalKg;
@@ -163,16 +176,17 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
 
         ensureRoom(16);
         drawTableRow(doc, y, [
-          { text: item.itemType.name, width: cols[0].width },
-          { text: seg.product.name || seg.product.code, width: cols[1].width },
-          { text: pileYarnDescription(seg), width: cols[2].width },
-          { text: `${item.widthCm}x${item.lengthCm}`, width: cols[3].width },
-          { text: String(item.gsm), width: cols[4].width },
-          { text: line.color, width: cols[5].width },
-          { text: qty.toLocaleString(), width: cols[6].width, align: 'right' },
-          { text: ratePc != null ? ratePc.toFixed(2) : '-', width: cols[7].width, align: 'right' },
-          { text: totalKg.toFixed(1), width: cols[8].width, align: 'right' },
-          { text: totalValue != null ? totalValue.toFixed(2) : '-', width: cols[9].width, align: 'right' },
+          { text: item.itemType.name, width: colW('item') },
+          { text: seg.product.name || seg.product.code, width: colW('quality') },
+          { text: pileYarnDescription(seg), width: colW('pileYarn') },
+          { text: `${item.widthCm}x${item.lengthCm}`, width: colW('size') },
+          { text: String(item.gsm), width: colW('gsm') },
+          { text: line.color, width: colW('color') },
+          { text: qty.toLocaleString(), width: colW('qty'), align: 'right' },
+          { text: ratePc != null ? ratePc.toFixed(2) : '-', width: colW('ratePc'), align: 'right' },
+          ...(freight.applies ? [{ text: freightPc.toFixed(2), width: colW('freightPc'), align: 'right' as const }] : []),
+          { text: totalKg.toFixed(1), width: colW('totalKg'), align: 'right' },
+          { text: totalValue != null ? totalValue.toFixed(2) : '-', width: colW('totalValue'), align: 'right' },
         ]);
         y += 16;
       }
@@ -186,11 +200,12 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
     doc,
     y,
     [
-      { text: 'Grand Total', width: cols[0].width + cols[1].width + cols[2].width + cols[3].width + cols[4].width + cols[5].width },
-      { text: grandQty.toLocaleString(), width: cols[6].width, align: 'right' },
-      { text: '', width: cols[7].width, align: 'right' },
-      { text: grandKg.toFixed(1), width: cols[8].width, align: 'right' },
-      { text: `${symbol}${grandValue.toFixed(2)}`, width: cols[9].width, align: 'right' },
+      { text: 'Grand Total', width: colW('item') + colW('quality') + colW('pileYarn') + colW('size') + colW('gsm') + colW('color') },
+      { text: grandQty.toLocaleString(), width: colW('qty'), align: 'right' },
+      { text: '', width: colW('ratePc'), align: 'right' },
+      ...(freight.applies ? [{ text: '', width: colW('freightPc'), align: 'right' as const }] : []),
+      { text: grandKg.toFixed(1), width: colW('totalKg'), align: 'right' },
+      { text: `${symbol}${grandValue.toFixed(2)}`, width: colW('totalValue'), align: 'right' },
     ],
     { bold: true },
   );
@@ -204,7 +219,7 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   doc.font('Helvetica').fontSize(8.5);
   const terms = [
     quote.paymentTerms ? `Payment Terms: ${quote.paymentTerms}` : null,
-    quote.freightTerms ? `Freight Terms: ${quote.freightTerms}` : null,
+    freight.termsLabel ? `Freight Terms: ${freight.termsLabel}` : quote.freightTerms ? `Freight Terms: ${quote.freightTerms}` : null,
     'Quantity Tolerance: +/- 5%',
     'Dimensional Tolerance - Length/Width: +/- 5%, Weight: +/- 3%',
     'Standard packing: one woven care label plus polybag and carton packing',

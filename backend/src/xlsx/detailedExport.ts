@@ -88,6 +88,12 @@ export interface ItemSheetContext {
   hsnCode: string | null;
   dbkPct: number;
   rosctlRodepPct: number;
+
+  // CFR/CIF/Door Delivery only: this item's share of the quote's total container cost, in
+  // the quote's own currency - a plain value (not itself a formula, since it depends on
+  // every item in the whole quote, not just this sheet's inputs). undefined/0 when the
+  // quote is FOB or has no container cost entered - see freightAllocation.ts.
+  containerFreightPerPiece?: number;
 }
 
 const LABEL_FONT = { bold: true };
@@ -110,6 +116,8 @@ export interface ItemSheetResult {
   qtyPerSetCell: string;
   qtyKgPerSetCell: string;
   marginPctCell: string;
+  // Set only when ctx.containerFreightPerPiece was provided.
+  freightPieceCell?: string;
 }
 
 export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): ItemSheetResult {
@@ -545,6 +553,13 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): It
   ws.getCell(r, 1).font = TITLE_FONT;
   const ratePieceCell = putMoney(r, 2, { formula: `${rateKgCell}*${pieceWeightCell}/1000` } as any);
   ws.getCell(r, 2).font = TITLE_FONT;
+  r++;
+
+  let freightPieceCell: string | undefined;
+  if (ctx.containerFreightPerPiece) {
+    put(r, 1, `Container freight allocation / pc (${ctx.currency}) - CFR/CIF/Door Delivery`);
+    freightPieceCell = putMoney(r, 2, ctx.containerFreightPerPiece);
+  }
 
   const sheetRef = (addr: string) => `'${ws.name}'!${addr}`;
   return {
@@ -554,6 +569,7 @@ export function writeItemSheet(ws: ExcelJS.Worksheet, ctx: ItemSheetContext): It
     qtyPerSetCell: sheetRef(qtyPerSetCell),
     qtyKgPerSetCell: sheetRef(qtyKgPerSetCell),
     marginPctCell: sheetRef(marginCell),
+    freightPieceCell: freightPieceCell ? sheetRef(freightPieceCell) : undefined,
   };
 }
 

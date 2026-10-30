@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { resolveCurrentRate } from '../lib/rates';
 import { getCurrentExchangeRates } from '../lib/exchangeRates';
 import { writeItemSheet, sanitizeSheetName, type ItemSheetContext } from './detailedExport';
+import { computeFreightAllocation } from '../costing/freightAllocation';
 
 const lineFull = {
   segments: {
@@ -42,6 +43,13 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
   const allRates = await getCurrentExchangeRates();
   const exchangeRateToInr = quote.currency === 'INR' ? 1 : allRates[quote.currency] ?? 1;
 
+  const freight = computeFreightAllocation({
+    incoterm: quote.incoterm,
+    containerCostTotal: quote.containerCostTotal,
+    freightTerms: quote.freightTerms,
+    lines: quote.lines,
+  });
+
   const wb = new ExcelJS.Workbook();
   // Created first so it lands as the first tab; filled in after the item sheets below
   // (once we know each item sheet's name to cross-reference).
@@ -72,6 +80,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     rateKgFormula: string;
     ratePcFormula: string;
     marginPctFormula: string;
+    freightPcFormula?: string;
   }
   const summaryRows: SummaryRow[] = [];
 
@@ -174,11 +183,15 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
           hsnCode: item.hsnCode?.hsCode ?? null,
           dbkPct: item.hsnCode?.dbkPct ?? 0,
           rosctlRodepPct: item.hsnCode?.rosctlRodepPct ?? 0,
+          containerFreightPerPiece: freight.perPiece(item.pieceWeightGrams),
         };
 
         const sheetName = uniqueSheetName(`S${lineIdx + 1}-${item.itemType.name}`);
         const ws = wb.addWorksheet(sheetName);
-        const { rateKgCell, ratePieceCell, gsmCell, qtyPerSetCell, qtyKgPerSetCell, marginPctCell } = writeItemSheet(ws, ctx);
+        const { rateKgCell, ratePieceCell, gsmCell, qtyPerSetCell, qtyKgPerSetCell, marginPctCell, freightPieceCell } = writeItemSheet(
+          ws,
+          ctx,
+        );
 
         summaryRows.push({
           setNo: lineIdx + 1,
@@ -193,15 +206,18 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
           rateKgFormula: rateKgCell,
           ratePcFormula: ratePieceCell,
           marginPctFormula: marginPctCell,
+          freightPcFormula: freightPieceCell,
         });
       }
     }
   }
 
-  summaryWs.mergeCells(1, 1, 1, 12);
+  const lastCol = freight.applies ? 13 : 12;
+  summaryWs.mergeCells(1, 1, 1, lastCol);
   const summaryTitleParts = [`Quote ${quote.quoteNo}`];
   if (quote.customerEnquiryNo) summaryTitleParts.push(`Enquiry No ${quote.customerEnquiryNo}`);
   summaryTitleParts.push(quote.customer.name, quote.createdAt.toDateString(), `Currency: ${quote.currency}`);
+  if (freight.termsLabel) summaryTitleParts.push(`Freight Terms: ${freight.termsLabel}`);
   summaryWs.getCell(1, 1).value = summaryTitleParts.join(' - ');
   summaryWs.getCell(1, 1).font = { bold: true, size: 13 };
 
@@ -219,6 +235,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     `Rate/Pc (${quote.currency})`,
     'Margin %',
     'Total Margin',
+    ...(freight.applies ? [`Freight/Pc (${quote.currency})`] : []),
   ];
   const highlightedHeaders = new Set(['GSM', 'Qty in Pcs', 'Qty in Kg', 'Margin %', 'Total Margin']);
   headers.forEach((h, i) => {
@@ -240,6 +257,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     { width: 16 },
     { width: 10 },
     { width: 16 },
+    ...(freight.applies ? [{ width: 16 }] : []),
   ];
 
   let row = 4;
@@ -268,6 +286,10 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     // ordered quantity, in the quote's currency.
     summaryWs.getCell(row, 12).value = { formula: `J${row}*G${row}*K${row}` } as any;
     summaryWs.getCell(row, 12).numFmt = '#,##0.00';
+    if (freight.applies && s.freightPcFormula) {
+      summaryWs.getCell(row, 13).value = { formula: s.freightPcFormula } as any;
+      summaryWs.getCell(row, 13).numFmt = '#,##0.0000';
+    }
     row++;
   }
   const lastDataRow = row - 1;

@@ -10,6 +10,8 @@ interface Setting {
 
 const LABELS: Record<string, string> = {
   freightExportPerKg: 'Export freight (₹/kg)',
+  yarnDyedMoqKg: 'Yarn-dyed MOQ (Kg per article)',
+  moqShortfallRejectionPct: 'MOQ shortfall rejection surcharge (fraction, e.g. 0.05 = 5%)',
 };
 
 export function GeneralSettingsPage() {

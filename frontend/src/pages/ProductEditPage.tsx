@@ -44,6 +44,10 @@ export function ProductEditPage() {
     washingLossPct: 0,
   });
   const [colorMethod, setColorMethod] = useState<'PIECE_DYED' | 'YARN_DYED'>('PIECE_DYED');
+  // Optional per-product override of the general "yarn-dyed MOQ (Kg)" setting (General
+  // Mapping) - blank means "use the general default". String state since it's nullable, not
+  // a plain number like the other process fields above.
+  const [yarnDyedMoqKgOverride, setYarnDyedMoqKgOverride] = useState('');
   const [yarnRows, setYarnRows] = useState<YarnRow[]>([
     { slot: 'Ground', rawMaterialId: 0, mixingPct: 20, dyeingCostPerKg: 0, dyeVariant: '' },
     { slot: 'Pile', rawMaterialId: 0, mixingPct: 60, dyeingCostPerKg: 0, dyeVariant: '' },
@@ -81,6 +85,7 @@ export function ProductEditPage() {
         washingLossPct: (p.washingLossPct ?? 0) * 100,
       });
       setColorMethod(p.colorMethod ?? 'PIECE_DYED');
+      setYarnDyedMoqKgOverride(p.yarnDyedMoqKgOverride != null ? String(p.yarnDyedMoqKgOverride) : '');
       setYarnRows(
         p.yarnComponents.map((c) => ({
           slot: c.slot,
@@ -160,6 +165,7 @@ export function ProductEditPage() {
       rejectionPct: fields.rejectionPct / 100,
       secondRejectionPct: fields.secondRejectionPct / 100,
       colorMethod,
+      yarnDyedMoqKgOverride: yarnDyedMoqKgOverride.trim() ? Number(yarnDyedMoqKgOverride) : null,
       yarnDyeingProcessLossPct: fields.yarnDyeingProcessLossPct / 100,
       washingCostPerKg: fields.washingCostPerKg,
       washingLossPct: fields.washingLossPct / 100,
@@ -293,6 +299,12 @@ export function ProductEditPage() {
             <label>Second rejection % (garment items only)</label>
             <input type="number" step="0.01" value={fields.secondRejectionPct} onChange={(e) => setFields({ ...fields, secondRejectionPct: Number(e.target.value) })} />
           </div>
+          {colorMethod === 'YARN_DYED' && (
+            <div className="field">
+              <label>MOQ override (Kg, optional - blank uses the general default)</label>
+              <input type="number" value={yarnDyedMoqKgOverride} onChange={(e) => setYarnDyedMoqKgOverride(e.target.value)} />
+            </div>
+          )}
         </div>
         {colorMethod === 'YARN_DYED' && (
           <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
