@@ -4,6 +4,8 @@ import { useAuth } from '../AuthContext';
 import type { Role } from '../types';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
+import { SortableTh } from '../components/SortableTh';
+import { useSortableTable } from '../hooks/useSortableTable';
 
 interface ManagedUser {
   id: number;
@@ -39,6 +41,14 @@ export function UsersPage() {
     api.get<ManagedUser[]>('/users').then(setUsers).catch((e) => setError(e.message));
   }
   useEffect(load, [isAdmin]);
+
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(users, {
+    username: (u) => u.username,
+    name: (u) => u.name,
+    email: (u) => u.email ?? '',
+    role: (u) => u.role,
+    active: (u) => (u.active ? 1 : 0),
+  });
 
   if (!isAdmin) {
     return (
@@ -110,16 +120,16 @@ export function UsersPage() {
         <table>
           <thead>
             <tr>
-              <th>Username</th>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Status</th>
+              <SortableTh label="Username" sortKey="username" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Name" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Email" sortKey="email" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Role" sortKey="role" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Status" sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
               <th className="right">Action</th>
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => (
+            {sorted.map((u) => (
               <tr key={u.id}>
                 <td>{u.username}</td>
                 <td>{u.name}</td>

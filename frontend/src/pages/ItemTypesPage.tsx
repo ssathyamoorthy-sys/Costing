@@ -4,6 +4,8 @@ import type { ItemType, SizingMethod } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
+import { SortableTh } from '../components/SortableTh';
+import { useSortableTable } from '../hooks/useSortableTable';
 
 const empty: { name: string; stitchingCostPerKg: number; packingCostPerKg: number; sizingMethod: SizingMethod; stitchingCostPerPiece: number } = {
   name: '',
@@ -26,6 +28,13 @@ export function ItemTypesPage() {
     api.get<ItemType[]>('/item-types').then(setItems).catch((e) => setError(e.message));
   }
   useEffect(load, []);
+
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(items, {
+    name: (it) => it.name,
+    sizingMethod: (it) => it.sizingMethod ?? '',
+    stitchingCost: (it) => (it.sizingMethod === 'FABRIC_CONSUMPTION' ? it.stitchingCostPerPiece ?? 0 : it.stitchingCostPerKg),
+    packingCostPerKg: (it) => it.packingCostPerKg,
+  });
 
   function openNew() {
     setEditing(null);
@@ -70,15 +79,15 @@ export function ItemTypesPage() {
         <table>
           <thead>
             <tr>
-              <th>Item Type</th>
-              <th>Sizing</th>
-              <th className="right">Stitching Cost</th>
-              <th className="right">Packing Cost/Kg</th>
+              <SortableTh label="Item Type" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Sizing" sortKey="sizingMethod" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Stitching Cost" sortKey="stitchingCost" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+              <SortableTh label="Packing Cost/Kg" sortKey="packingCostPerKg" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
               {canEdit && <th />}
             </tr>
           </thead>
           <tbody>
-            {items.map((it) => (
+            {sorted.map((it) => (
               <tr key={it.id}>
                 <td>{it.name}</td>
                 <td>{it.sizingMethod === 'FABRIC_CONSUMPTION' ? 'Fabric consumption (garment)' : 'L x W (flat)'}</td>

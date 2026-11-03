@@ -63,9 +63,14 @@ export function QuotesListPage() {
   const [recentCustomers, pushRecentCustomer] = useRecentItems('customer');
   const [filterText, setFilterText] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [loading, setLoading] = useState(true);
 
   function load() {
-    api.get<Quote[]>('/quotes').then(setQuotes).catch((e) => setError(e.message));
+    api
+      .get<Quote[]>('/quotes')
+      .then(setQuotes)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
   }
   useEffect(load, []);
 
@@ -142,6 +147,10 @@ export function QuotesListPage() {
         )}
       </div>
       {error && <Alert type="error">{error}</Alert>}
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div className="tag-row" style={{ marginBottom: 14 }}>
         <input
           placeholder="Filter by quote no, enquiry no, or customer..."
@@ -207,6 +216,8 @@ export function QuotesListPage() {
           </tbody>
         </table>
       </div>
+        </>
+      )}
 
       {showNew && (
         <Modal title="New quote" onClose={() => setShowNew(false)}>

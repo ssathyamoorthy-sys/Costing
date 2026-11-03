@@ -3,6 +3,20 @@ import { api } from '../api';
 import type { Customer, Product, RawMaterial } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
+import { SortableTh } from '../components/SortableTh';
+import { useSortableTable } from '../hooks/useSortableTable';
+import { exportRowsToCsv } from '../lib/exportCsv';
+
+function ExportCsvButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button className="btn small" onClick={onClick}>
+      Export CSV
+    </button>
+  );
+}
+function todayStamp() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 const CURRENCY_SYMBOL: Record<string, string> = { INR: '₹', USD: '$', GBP: '£', EUR: '€' };
 const sym = (c: string) => CURRENCY_SYMBOL[c] || '';
@@ -70,26 +84,53 @@ function PipelineSummaryReport() {
   const [rows, setRows] = useState<PipelineRow[]>([]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     const qs = new URLSearchParams();
     if (from) qs.set('from', from);
     if (to) qs.set('to', to);
-    api.get<PipelineRow[]>(`/reports/pipeline-summary?${qs}`).then(setRows);
+    setLoading(true);
+    api.get<PipelineRow[]>(`/reports/pipeline-summary?${qs}`).then(setRows).finally(() => setLoading(false));
   }, [from, to]);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    status: (r) => r.status,
+    currency: (r) => r.currency,
+    count: (r) => r.count,
+    totalValue: (r) => r.totalValue,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `pipeline-summary-${todayStamp()}.csv`,
+      [
+        { key: 'status', label: 'Status' },
+        { key: 'currency', label: 'Currency' },
+        { key: 'count', label: 'Count' },
+        { key: 'totalValue', label: 'Total Value' },
+      ],
+      sorted.map((r) => ({ status: r.status.replace(/_/g, ' '), currency: r.currency, count: r.count, totalValue: money(r.totalValue, r.currency) })),
+    );
+  }
   return (
     <div>
       <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
       <table>
         <thead>
           <tr>
-            <th>Status</th>
-            <th>Currency</th>
-            <th className="right">Count</th>
-            <th className="right">Total Value</th>
+            <SortableTh label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Currency" sortKey="currency" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Count" sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Total Value" sortKey="totalValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <tr key={i}>
               <td>{r.status.replace(/_/g, ' ')}</td>
               <td>{r.currency}</td>
@@ -106,6 +147,8 @@ function PipelineSummaryReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
@@ -121,28 +164,59 @@ function WinLossReport() {
   const [data, setData] = useState<{ rows: WinLossRow[]; totalQuotes: number }>({ rows: [], totalQuotes: 0 });
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     const qs = new URLSearchParams();
     if (from) qs.set('from', from);
     if (to) qs.set('to', to);
-    api.get<{ rows: WinLossRow[]; totalQuotes: number }>(`/reports/win-loss?${qs}`).then(setData);
+    setLoading(true);
+    api.get<{ rows: WinLossRow[]; totalQuotes: number }>(`/reports/win-loss?${qs}`).then(setData).finally(() => setLoading(false));
   }, [from, to]);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(data.rows, {
+    status: (r) => r.status,
+    currency: (r) => r.currency,
+    count: (r) => r.count,
+    pctOfTotal: (r) => (data.totalQuotes ? r.count / data.totalQuotes : 0),
+    totalValue: (r) => r.totalValue,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `win-loss-${todayStamp()}.csv`,
+      [
+        { key: 'status', label: 'Outcome' },
+        { key: 'currency', label: 'Currency' },
+        { key: 'count', label: 'Count' },
+        { key: 'pctOfTotal', label: '% of total' },
+        { key: 'totalValue', label: 'Total Value' },
+      ],
+      sorted.map((r) => ({
+        status: r.status.replace(/_/g, ' '),
+        currency: r.currency,
+        count: r.count,
+        pctOfTotal: data.totalQuotes ? pct(r.count / data.totalQuotes) : '-',
+        totalValue: money(r.totalValue, r.currency),
+      })),
+    );
+  }
   return (
     <div>
       <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
       <p className="muted" style={{ fontSize: 12 }}>Outcome date approximated from last update, since there's no separate "converted/lost at" timestamp.</p>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
       <table>
         <thead>
           <tr>
-            <th>Outcome</th>
-            <th>Currency</th>
-            <th className="right">Count</th>
-            <th className="right">% of total</th>
-            <th className="right">Total Value</th>
+            <SortableTh label="Outcome" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Currency" sortKey="currency" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Count" sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="% of total" sortKey="pctOfTotal" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Total Value" sortKey="totalValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
           </tr>
         </thead>
         <tbody>
-          {data.rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <tr key={i}>
               <td>{r.status.replace(/_/g, ' ')}</td>
               <td>{r.currency}</td>
@@ -186,23 +260,58 @@ function SalesByCustomerReport() {
     if (to) qs.set('to', to);
     api.get<SalesByCustomerRow[]>(`/reports/sales-by-customer?${qs}`).then(setRows);
   }, [from, to]);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    customerName: (r) => r.customerName,
+    region: (r) => r.region,
+    quoteCount: (r) => r.quoteCount,
+    quotedValue: (r) => r.quotedValue,
+    convertedCount: (r) => r.convertedCount,
+    convertedValue: (r) => r.convertedValue,
+    winRate: (r) => r.winRate,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `sales-by-customer-${todayStamp()}.csv`,
+      [
+        { key: 'customerName', label: 'Customer' },
+        { key: 'region', label: 'Region' },
+        { key: 'quoteCount', label: 'Quotes' },
+        { key: 'quotedValue', label: 'Quoted Value' },
+        { key: 'convertedCount', label: 'Converted' },
+        { key: 'convertedValue', label: 'Converted Value' },
+        { key: 'winRate', label: 'Win Rate' },
+      ],
+      sorted.map((r) => ({
+        customerName: r.customerName,
+        region: r.region,
+        quoteCount: r.quoteCount,
+        quotedValue: money(r.quotedValue, r.currency),
+        convertedCount: r.convertedCount,
+        convertedValue: money(r.convertedValue, r.currency),
+        winRate: pct(r.winRate),
+      })),
+    );
+  }
   return (
     <div>
       <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
       <table>
         <thead>
           <tr>
-            <th>Customer</th>
-            <th>Region</th>
-            <th className="right">Quotes</th>
-            <th className="right">Quoted Value</th>
-            <th className="right">Converted</th>
-            <th className="right">Converted Value</th>
-            <th className="right">Win Rate</th>
+            <SortableTh label="Customer" sortKey="customerName" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Region" sortKey="region" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Quotes" sortKey="quoteCount" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Quoted Value" sortKey="quotedValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Converted" sortKey="convertedCount" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Converted Value" sortKey="convertedValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Win Rate" sortKey="winRate" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sorted.map((r) => (
             <tr key={r.customerId}>
               <td>{r.customerName}</td>
               <td>{r.region}</td>
@@ -244,21 +353,50 @@ function SalesByRegionReport() {
     if (to) qs.set('to', to);
     api.get<SalesByRegionRow[]>(`/reports/sales-by-region?${qs}`).then(setRows);
   }, [from, to]);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    region: (r) => r.region,
+    currency: (r) => r.currency,
+    count: (r) => r.count,
+    quotedValue: (r) => r.quotedValue,
+    convertedValue: (r) => r.convertedValue,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `sales-by-region-${todayStamp()}.csv`,
+      [
+        { key: 'region', label: 'Region' },
+        { key: 'currency', label: 'Currency' },
+        { key: 'count', label: 'Quotes' },
+        { key: 'quotedValue', label: 'Quoted Value' },
+        { key: 'convertedValue', label: 'Converted Value' },
+      ],
+      sorted.map((r) => ({
+        region: r.region,
+        currency: r.currency,
+        count: r.count,
+        quotedValue: money(r.quotedValue, r.currency),
+        convertedValue: money(r.convertedValue, r.currency),
+      })),
+    );
+  }
   return (
     <div>
       <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
       <table>
         <thead>
           <tr>
-            <th>Region</th>
-            <th>Currency</th>
-            <th className="right">Quotes</th>
-            <th className="right">Quoted Value</th>
-            <th className="right">Converted Value</th>
+            <SortableTh label="Region" sortKey="region" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Currency" sortKey="currency" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Quotes" sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Quoted Value" sortKey="quotedValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Converted Value" sortKey="convertedValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <tr key={i}>
               <td>{r.region}</td>
               <td>{r.currency}</td>
@@ -295,9 +433,35 @@ function MarginProfitabilityReport() {
   useEffect(() => {
     api.get<MarginRow[]>(`/reports/margin-profitability?groupBy=${groupBy}`).then(setRows);
   }, [groupBy]);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    label: (r) => r.label,
+    itemCount: (r) => r.itemCount,
+    avgMarginPct: (r) => r.avgMarginPct,
+    avgEffectiveMarginPctInclDbk: (r) => r.avgEffectiveMarginPctInclDbk,
+    totalProfit: (r) => r.totalProfit,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `margin-profitability-${todayStamp()}.csv`,
+      [
+        { key: 'label', label: groupBy === 'customer' ? 'Customer' : 'Product' },
+        { key: 'itemCount', label: 'Items' },
+        { key: 'avgMarginPct', label: 'Avg Margin %' },
+        { key: 'avgEffectiveMarginPctInclDbk', label: 'Avg Margin % incl. DBK' },
+        { key: 'totalProfit', label: 'Total Profit' },
+      ],
+      sorted.map((r) => ({
+        label: r.label,
+        itemCount: r.itemCount,
+        avgMarginPct: pct(r.avgMarginPct),
+        avgEffectiveMarginPctInclDbk: pct(r.avgEffectiveMarginPctInclDbk),
+        totalProfit: money(r.totalProfit, r.currency),
+      })),
+    );
+  }
   return (
     <div>
-      <div className="tag-row" style={{ marginBottom: 12 }}>
+      <div className="tag-row" style={{ marginBottom: 12, justifyContent: 'space-between' }}>
         <div className="field">
           <label>Group by</label>
           <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as 'customer' | 'product')}>
@@ -305,19 +469,27 @@ function MarginProfitabilityReport() {
             <option value="product">Product</option>
           </select>
         </div>
+        <ExportCsvButton onClick={exportCsv} />
       </div>
       <table>
         <thead>
           <tr>
-            <th>{groupBy === 'customer' ? 'Customer' : 'Product'}</th>
-            <th className="right">Items</th>
-            <th className="right">Avg Margin %</th>
-            <th className="right">Avg Margin % incl. DBK</th>
-            <th className="right">Total Profit</th>
+            <SortableTh label={groupBy === 'customer' ? 'Customer' : 'Product'} sortKey="label" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Items" sortKey="itemCount" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Avg Margin %" sortKey="avgMarginPct" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh
+              label="Avg Margin % incl. DBK"
+              sortKey="avgEffectiveMarginPctInclDbk"
+              activeKey={sortKey}
+              dir={sortDir}
+              onSort={toggleSort}
+              className="right"
+            />
+            <SortableTh label="Total Profit" sortKey="totalProfit" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <tr key={i}>
               <td>{r.label}</td>
               <td className="right mono">{r.itemCount}</td>
@@ -356,24 +528,56 @@ function PriceErosionReport() {
   useEffect(() => {
     api.get<ErosionRow[]>('/reports/price-erosion').then(setRows);
   }, []);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    quoteNo: (r) => r.quoteNo,
+    customerName: (r) => r.customerName,
+    status: (r) => r.status,
+    firstQuotedValue: (r) => r.firstQuotedValue,
+    currentValue: (r) => r.currentValue,
+    dropPct: (r) => r.dropPct,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `price-erosion-${todayStamp()}.csv`,
+      [
+        { key: 'quoteNo', label: 'Quote No' },
+        { key: 'customerName', label: 'Customer' },
+        { key: 'status', label: 'Status' },
+        { key: 'firstQuotedValue', label: 'First Quoted' },
+        { key: 'currentValue', label: 'Current' },
+        { key: 'dropPct', label: 'Drop %' },
+      ],
+      sorted.map((r) => ({
+        quoteNo: r.quoteNo,
+        customerName: r.customerName,
+        status: r.status.replace(/_/g, ' ') + (r.locked ? ' (locked)' : ''),
+        firstQuotedValue: money(r.firstQuotedValue, r.currency),
+        currentValue: money(r.currentValue, r.currency),
+        dropPct: pct(r.dropPct),
+      })),
+    );
+  }
   return (
     <div>
       <p className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
         Only quotes with at least one negotiation round (a price change after being quoted) appear here.
       </p>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
       <table>
         <thead>
           <tr>
-            <th>Quote No</th>
-            <th>Customer</th>
-            <th>Status</th>
-            <th className="right">First Quoted</th>
-            <th className="right">Current</th>
-            <th className="right">Drop %</th>
+            <SortableTh label="Quote No" sortKey="quoteNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Customer" sortKey="customerName" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="First Quoted" sortKey="firstQuotedValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Current" sortKey="currentValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Drop %" sortKey="dropPct" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sorted.map((r) => (
             <tr key={r.quoteId}>
               <td className="mono">{r.quoteNo}</td>
               <td>{r.customerName}</td>
@@ -412,18 +616,40 @@ function DbkSummaryReport() {
   useEffect(() => {
     api.get<DbkRow[]>('/reports/dbk-summary').then(setRows);
   }, []);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    hsCode: (r) => r.hsCode,
+    description: (r) => r.description,
+    itemCount: (r) => r.itemCount,
+    totalIncentiveValue: (r) => r.totalIncentiveValue,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `dbk-summary-${todayStamp()}.csv`,
+      [
+        { key: 'hsCode', label: 'HS Code' },
+        { key: 'description', label: 'Description' },
+        { key: 'itemCount', label: 'Items' },
+        { key: 'totalIncentiveValue', label: 'Total Incentive Value' },
+      ],
+      sorted.map((r) => ({ hsCode: r.hsCode, description: r.description, itemCount: r.itemCount, totalIncentiveValue: money(r.totalIncentiveValue, r.currency) })),
+    );
+  }
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>HS Code</th>
-          <th>Description</th>
-          <th className="right">Items</th>
-          <th className="right">Total Incentive Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r, i) => (
+    <div>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <SortableTh label="HS Code" sortKey="hsCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Description" sortKey="description" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Items" sortKey="itemCount" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Total Incentive Value" sortKey="totalIncentiveValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r, i) => (
           <tr key={i}>
             <td className="mono">{r.hsCode}</td>
             <td>{r.description}</td>
@@ -440,6 +666,7 @@ function DbkSummaryReport() {
         )}
       </tbody>
     </table>
+    </div>
   );
 }
 
@@ -460,21 +687,57 @@ function LockedRegisterReport() {
   useEffect(() => {
     api.get<LockedRow[]>('/reports/locked-register').then(setRows);
   }, []);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    finalReferenceNo: (r) => r.finalReferenceNo,
+    quoteNo: (r) => r.quoteNo,
+    customerName: (r) => r.customerName,
+    lockedBy: (r) => r.lockedBy,
+    lockedAt: (r) => r.lockedAt,
+    status: (r) => r.status,
+    finalValue: (r) => r.finalValue,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `locked-register-${todayStamp()}.csv`,
+      [
+        { key: 'finalReferenceNo', label: 'Reference #' },
+        { key: 'quoteNo', label: 'Quote No' },
+        { key: 'customerName', label: 'Customer' },
+        { key: 'lockedBy', label: 'Locked By' },
+        { key: 'lockedAt', label: 'Locked At' },
+        { key: 'status', label: 'Status' },
+        { key: 'finalValue', label: 'Final Value' },
+      ],
+      sorted.map((r) => ({
+        finalReferenceNo: r.finalReferenceNo,
+        quoteNo: r.quoteNo,
+        customerName: r.customerName,
+        lockedBy: r.lockedBy,
+        lockedAt: dt(r.lockedAt),
+        status: r.status.replace(/_/g, ' '),
+        finalValue: money(r.finalValue, r.currency),
+      })),
+    );
+  }
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>Reference #</th>
-          <th>Quote No</th>
-          <th>Customer</th>
-          <th>Locked By</th>
-          <th>Locked At</th>
-          <th>Status</th>
-          <th className="right">Final Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
+    <div>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <SortableTh label="Reference #" sortKey="finalReferenceNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Quote No" sortKey="quoteNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Customer" sortKey="customerName" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Locked By" sortKey="lockedBy" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Locked At" sortKey="lockedAt" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Final Value" sortKey="finalValue" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r) => (
           <tr key={r.quoteId}>
             <td className="mono">{r.finalReferenceNo}</td>
             <td className="mono">{r.quoteNo}</td>
@@ -494,6 +757,7 @@ function LockedRegisterReport() {
         )}
       </tbody>
     </table>
+    </div>
   );
 }
 
@@ -508,32 +772,57 @@ function ApprovalTurnaroundReport() {
   useEffect(() => {
     api.get<TurnaroundRow[]>('/reports/approval-turnaround').then(setRows);
   }, []);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    merchandiserName: (r) => r.merchandiserName,
+    count: (r) => r.count,
+    avgTurnaroundHours: (r) => r.avgTurnaroundHours,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `approval-turnaround-${todayStamp()}.csv`,
+      [
+        { key: 'merchandiserName', label: 'Merchandiser' },
+        { key: 'count', label: 'Quotes' },
+        { key: 'avgTurnaroundHours', label: 'Avg Turnaround (hrs)' },
+      ],
+      sorted.map((r) => ({
+        merchandiserName: r.merchandiserName,
+        count: r.count,
+        avgTurnaroundHours: r.avgTurnaroundHours.toFixed(1),
+      })),
+    );
+  }
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>Merchandiser</th>
-          <th className="right">Quotes</th>
-          <th className="right">Avg Turnaround (hrs)</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r, i) => (
-          <tr key={i}>
-            <td>{r.merchandiserName}</td>
-            <td className="right mono">{r.count}</td>
-            <td className="right mono">{r.avgTurnaroundHours.toFixed(1)}</td>
-          </tr>
-        ))}
-        {rows.length === 0 && (
+    <div>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
+      <table>
+        <thead>
           <tr>
-            <td colSpan={3} className="muted">
-              No quotes have been submitted and approved yet.
-            </td>
+            <SortableTh label="Merchandiser" sortKey="merchandiserName" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Quotes" sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Avg Turnaround (hrs)" sortKey="avgTurnaroundHours" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
           </tr>
-        )}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {sorted.map((r, i) => (
+            <tr key={i}>
+              <td>{r.merchandiserName}</td>
+              <td className="right mono">{r.count}</td>
+              <td className="right mono">{r.avgTurnaroundHours.toFixed(1)}</td>
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={3} className="muted">
+                No quotes have been submitted and approved yet.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -558,6 +847,38 @@ function RawMaterialHistoryReport() {
     const qs = materialId ? `?rawMaterialId=${materialId}` : '';
     api.get<RateHistoryRow[]>(`/reports/raw-material-history${qs}`).then(setRows);
   }, [materialId]);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    materialCode: (r) => r.materialCode,
+    pricePerKg: (r) => r.pricePerKg,
+    validFrom: (r) => r.validFrom,
+    validTo: (r) => r.validTo ?? '',
+    status: (r) => r.status,
+    enteredBy: (r) => r.enteredBy,
+    approvedBy: (r) => r.approvedBy,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `raw-material-history-${todayStamp()}.csv`,
+      [
+        { key: 'materialCode', label: 'Material' },
+        { key: 'pricePerKg', label: 'Rate/Kg' },
+        { key: 'validFrom', label: 'Valid From' },
+        { key: 'validTo', label: 'Valid To' },
+        { key: 'status', label: 'Status' },
+        { key: 'enteredBy', label: 'Entered By' },
+        { key: 'approvedBy', label: 'Approved By' },
+      ],
+      sorted.map((r) => ({
+        materialCode: r.materialCode,
+        pricePerKg: `₹${r.pricePerKg.toFixed(2)}`,
+        validFrom: new Date(r.validFrom).toLocaleDateString(),
+        validTo: r.validTo ? new Date(r.validTo).toLocaleDateString() : '-',
+        status: r.status,
+        enteredBy: r.enteredBy,
+        approvedBy: r.approvedBy,
+      })),
+    );
+  }
   return (
     <div>
       <div className="field" style={{ maxWidth: 260, marginBottom: 12 }}>
@@ -571,20 +892,23 @@ function RawMaterialHistoryReport() {
           ))}
         </select>
       </div>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
       <table>
         <thead>
           <tr>
-            <th>Material</th>
-            <th className="right">Rate/Kg</th>
-            <th>Valid From</th>
-            <th>Valid To</th>
-            <th>Status</th>
-            <th>Entered By</th>
-            <th>Approved By</th>
+            <SortableTh label="Material" sortKey="materialCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Rate/Kg" sortKey="pricePerKg" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Valid From" sortKey="validFrom" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Valid To" sortKey="validTo" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Entered By" sortKey="enteredBy" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Approved By" sortKey="approvedBy" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <tr key={i}>
               <td className="mono">{r.materialCode}</td>
               <td className="right mono">₹{r.pricePerKg.toFixed(2)}</td>
@@ -637,6 +961,20 @@ function MasterDataReport() {
     ],
   };
   const cols = columns[which];
+  const getters: Record<string, (r: any) => string | number> = {};
+  for (const c of cols) getters[c.key] = (r: any) => r[c.key] ?? '';
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, getters);
+  function exportCsv() {
+    exportRowsToCsv(
+      `${which}-${todayStamp()}.csv`,
+      cols,
+      sorted.map((r) => {
+        const out: Record<string, unknown> = {};
+        for (const c of cols) out[c.key] = String(r[c.key] ?? '-');
+        return out;
+      }),
+    );
+  }
 
   return (
     <div>
@@ -648,16 +986,19 @@ function MasterDataReport() {
           <option value="raw-materials">Raw Materials</option>
         </select>
       </div>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
       <table>
         <thead>
           <tr>
             {cols.map((c) => (
-              <th key={c.key}>{c.label}</th>
+              <SortableTh key={c.key} label={c.label} sortKey={c.key} activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sorted.map((r) => (
             <tr key={r.id}>
               {cols.map((c) => (
                 <td key={c.key}>{String(r[c.key] ?? '-')}</td>
@@ -705,6 +1046,48 @@ function PricingHistoryReport() {
     api.get<PricingHistoryRow[]>(`/reports/pricing-history?productId=${productId}`).then(setRows);
   }, [productId]);
 
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    date: (r) => r.date,
+    quoteNo: (r) => r.quoteNo,
+    customerName: (r) => r.customerName,
+    itemType: (r) => r.itemType,
+    size: (r) => r.size,
+    color: (r) => r.color,
+    ratePerPiece: (r) => r.ratePerPiece ?? -1,
+    ratePerKg: (r) => r.ratePerKg ?? -1,
+    currency: (r) => r.currency,
+    fxRate: (r) => r.fxRate ?? -1,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `pricing-history-${todayStamp()}.csv`,
+      [
+        { key: 'date', label: 'Date' },
+        { key: 'quoteNo', label: 'Quote No' },
+        { key: 'customerName', label: 'Customer' },
+        { key: 'itemType', label: 'Item' },
+        { key: 'size', label: 'Size' },
+        { key: 'color', label: 'Color' },
+        { key: 'ratePerPiece', label: 'Rate/Pc' },
+        { key: 'ratePerKg', label: 'Rate/Kg' },
+        { key: 'currency', label: 'Currency' },
+        { key: 'fxRate', label: 'FX Rate (INR/unit)' },
+      ],
+      sorted.map((r) => ({
+        date: new Date(r.date).toLocaleDateString(),
+        quoteNo: r.quoteNo,
+        customerName: r.customerName,
+        itemType: r.itemType,
+        size: r.size,
+        color: r.color,
+        ratePerPiece: r.ratePerPiece != null ? r.ratePerPiece.toFixed(4) : '-',
+        ratePerKg: r.ratePerKg != null ? r.ratePerKg.toFixed(4) : '-',
+        currency: r.currency,
+        fxRate: r.fxRate != null ? r.fxRate.toFixed(4) : '-',
+      })),
+    );
+  }
+
   return (
     <div>
       <div className="field" style={{ maxWidth: 300, marginBottom: 12 }}>
@@ -720,45 +1103,50 @@ function PricingHistoryReport() {
         </select>
       </div>
       {productId && (
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Quote No</th>
-              <th>Customer</th>
-              <th>Item</th>
-              <th>Size</th>
-              <th>Color</th>
-              <th className="right">Rate/Pc</th>
-              <th className="right">Rate/Kg</th>
-              <th>Currency</th>
-              <th className="right">FX Rate (INR/unit)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i}>
-                <td>{new Date(r.date).toLocaleDateString()}</td>
-                <td className="mono">{r.quoteNo}</td>
-                <td>{r.customerName}</td>
-                <td>{r.itemType}</td>
-                <td>{r.size}</td>
-                <td>{r.color}</td>
-                <td className="right mono">{r.ratePerPiece != null ? r.ratePerPiece.toFixed(4) : '-'}</td>
-                <td className="right mono">{r.ratePerKg != null ? r.ratePerKg.toFixed(4) : '-'}</td>
-                <td>{r.currency}</td>
-                <td className="right mono">{r.fxRate != null ? r.fxRate.toFixed(4) : '-'}</td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
+        <div>
+          <div style={{ marginBottom: 12 }}>
+            <ExportCsvButton onClick={exportCsv} />
+          </div>
+          <table>
+            <thead>
               <tr>
-                <td colSpan={10} className="muted">
-                  No quoted history for this product yet.
-                </td>
+                <SortableTh label="Date" sortKey="date" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Quote No" sortKey="quoteNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Customer" sortKey="customerName" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Item" sortKey="itemType" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Size" sortKey="size" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Color" sortKey="color" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Rate/Pc" sortKey="ratePerPiece" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+                <SortableTh label="Rate/Kg" sortKey="ratePerKg" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+                <SortableTh label="Currency" sortKey="currency" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="FX Rate (INR/unit)" sortKey="fxRate" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sorted.map((r, i) => (
+                <tr key={i}>
+                  <td>{new Date(r.date).toLocaleDateString()}</td>
+                  <td className="mono">{r.quoteNo}</td>
+                  <td>{r.customerName}</td>
+                  <td>{r.itemType}</td>
+                  <td>{r.size}</td>
+                  <td>{r.color}</td>
+                  <td className="right mono">{r.ratePerPiece != null ? r.ratePerPiece.toFixed(4) : '-'}</td>
+                  <td className="right mono">{r.ratePerKg != null ? r.ratePerKg.toFixed(4) : '-'}</td>
+                  <td>{r.currency}</td>
+                  <td className="right mono">{r.fxRate != null ? r.fxRate.toFixed(4) : '-'}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={10} className="muted">
+                    No quoted history for this product yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -790,6 +1178,45 @@ function CurrentPricingByCustomerReport() {
     api.get<CurrentPricingRow[]>(`/reports/current-pricing-by-customer${qs}`).then(setRows);
   }, [customerId]);
 
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    customerName: (r) => r.customerName,
+    productLabel: (r) => r.productLabel,
+    itemType: (r) => r.itemType,
+    size: (r) => r.size,
+    gsm: (r) => r.gsm,
+    color: (r) => r.color,
+    ratePerPiece: (r) => r.ratePerPiece ?? -1,
+    ratePerKg: (r) => r.ratePerKg ?? -1,
+    asOf: (r) => r.asOf,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `current-pricing-by-customer-${todayStamp()}.csv`,
+      [
+        { key: 'customerName', label: 'Customer' },
+        { key: 'productLabel', label: 'Product' },
+        { key: 'itemType', label: 'Item' },
+        { key: 'size', label: 'Size' },
+        { key: 'gsm', label: 'GSM' },
+        { key: 'color', label: 'Color' },
+        { key: 'ratePerPiece', label: 'Rate/Pc' },
+        { key: 'ratePerKg', label: 'Rate/Kg' },
+        { key: 'asOf', label: 'As of Quote' },
+      ],
+      sorted.map((r) => ({
+        customerName: r.customerName,
+        productLabel: r.productLabel,
+        itemType: r.itemType,
+        size: r.size,
+        gsm: r.gsm,
+        color: r.color,
+        ratePerPiece: r.ratePerPiece != null ? `${sym(r.currency)}${r.ratePerPiece.toFixed(4)}` : '-',
+        ratePerKg: r.ratePerKg != null ? `${sym(r.currency)}${r.ratePerKg.toFixed(4)}` : '-',
+        asOf: `${r.quoteNo} (${new Date(r.asOf).toLocaleDateString()})`,
+      })),
+    );
+  }
+
   return (
     <div>
       <div className="field" style={{ maxWidth: 260, marginBottom: 12 }}>
@@ -803,22 +1230,25 @@ function CurrentPricingByCustomerReport() {
           ))}
         </select>
       </div>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
       <table>
         <thead>
           <tr>
-            <th>Customer</th>
-            <th>Product</th>
-            <th>Item</th>
-            <th>Size</th>
-            <th className="right">GSM</th>
-            <th>Color</th>
-            <th className="right">Rate/Pc</th>
-            <th className="right">Rate/Kg</th>
-            <th>As of Quote</th>
+            <SortableTh label="Customer" sortKey="customerName" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Product" sortKey="productLabel" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Item" sortKey="itemType" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Size" sortKey="size" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="GSM" sortKey="gsm" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Color" sortKey="color" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Rate/Pc" sortKey="ratePerPiece" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="Rate/Kg" sortKey="ratePerKg" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+            <SortableTh label="As of Quote" sortKey="asOf" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <tr key={i}>
               <td>{r.customerName}</td>
               <td>{r.productLabel}</td>
@@ -881,6 +1311,35 @@ function ChangeLogReport() {
     api.get<ChangeLogRow[]>(`/reports/change-log?${qs}`).then(setRows);
   }, [entityType, from, to]);
 
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
+    createdAt: (r) => r.createdAt,
+    changedBy: (r) => r.changedBy,
+    action: (r) => r.action,
+    entityLabel: (r) => r.entityLabel,
+  });
+  function exportCsv() {
+    exportRowsToCsv(
+      `change-log-${todayStamp()}.csv`,
+      [
+        { key: 'createdAt', label: 'When' },
+        { key: 'changedBy', label: 'Changed by' },
+        { key: 'action', label: 'Action' },
+        { key: 'entityLabel', label: 'Record' },
+        { key: 'changes', label: 'Changes' },
+      ],
+      sorted.map((r) => ({
+        createdAt: dt(r.createdAt),
+        changedBy: r.changedBy,
+        action: r.action === 'CREATE' ? 'Created' : 'Updated',
+        entityLabel: r.entityLabel,
+        changes:
+          r.changes.length === 0
+            ? '-'
+            : r.changes.map((c) => `${c.field}: ${formatChangeValue(c.oldValue)} -> ${formatChangeValue(c.newValue)}`).join('; '),
+      })),
+    );
+  }
+
   return (
     <div>
       <div className="tag-row" style={{ marginBottom: 12, alignItems: 'flex-end' }}>
@@ -896,18 +1355,21 @@ function ChangeLogReport() {
         </div>
         <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
       </div>
+      <div style={{ marginBottom: 12 }}>
+        <ExportCsvButton onClick={exportCsv} />
+      </div>
       <table>
         <thead>
           <tr>
-            <th>When</th>
-            <th>Changed by</th>
-            <th>Action</th>
-            <th>Record</th>
+            <SortableTh label="When" sortKey="createdAt" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Changed by" sortKey="changedBy" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Action" sortKey="action" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+            <SortableTh label="Record" sortKey="entityLabel" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
             <th>Changes</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sorted.map((r) => (
             <tr key={r.id}>
               <td className="muted">{dt(r.createdAt)}</td>
               <td>{r.changedBy}</td>

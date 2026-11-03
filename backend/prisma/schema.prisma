@@ -37,6 +37,7 @@ model User {
   quoteTemplates     QuoteTemplate[]
   quoteTemplateGroups QuoteTemplateGroup[]
   auditLogs          AuditLog[]
+  scenarioRules      ScenarioRule[]
 }
 
 model RawMaterial {
@@ -131,10 +132,9 @@ model Product {
   yarnDyeingProcessLossPct   Float  @default(0)
   washingCostPerKg           Float  @default(0)
   washingLossPct             Float  @default(0)
-  // YARN_DYED only: overrides the general "yarnDyedMoqKg" setting (General Mapping) with a
-  // dye-house MOQ specific to this article, in finished-product Kg. Null = use the general
-  // default. An order under the effective threshold gets the general "moqShortfallRejectionPct"
-  // added to rejectionPct for that segment - see computeSet.ts.
+  // Superseded by the generic ScenarioRule table (a PRODUCT-scoped rule on REJECTION_PCT
+  // does this job now, admin-editable without a code change) - no longer read anywhere, kept
+  // only because migrations in this project are additive-only (no DROP COLUMN).
   yarnDyedMoqKgOverride      Float?
 
   active                 Boolean  @default(true)
@@ -145,6 +145,7 @@ model Product {
   accessories    ProductAccessory[]
   quoteLineSegments QuoteLineSegment[]
   templateSegments  QuoteTemplateSegment[]
+  scenarioRules     ScenarioRule[]
 }
 
 model ProductYarnComponent {
@@ -593,6 +594,43 @@ model GeneralSetting {
   updatedAt DateTime @updatedAt
 }
 
+// A configurable "IF <scope> AND <field> <operator> <value> THEN increase <action> by
+// <amount>" costing rule - e.g. "IF Yarn Dyed, Order Qty < 1000kg THEN increase Rejection %
+// by 5%". Evaluated per segment/item in computeSet.ts, admin-editable via the Scenario
+// Rules page - no code change needed to add/adjust a rule within the supported
+// scope/field/action vocabulary (see computeSet.ts's RULE_* constants for that vocabulary).
+model ScenarioRule {
+  id     Int     @id @default(autoincrement())
+  name   String
+  active Boolean @default(true)
+
+  // Scope: which segments this rule can match. 'ALL' (scopeProductId null) matches every
+  // segment; 'COLOR_METHOD_YARN_DYED' (scopeProductId null) matches yarn-dyed products only;
+  // 'PRODUCT' matches one specific product only (scopeProductId set).
+  scopeType      String
+  scopeProductId Int?
+  scopeProduct   Product? @relation(fields: [scopeProductId], references: [id])
+
+  // Condition: IF <conditionField> <conditionOperator> <conditionValue>.
+  // conditionField: 'ORDER_QTY_KG' (segment's total order weight) | 'GSM' (per-item GSM).
+  // conditionOperator: '<' | '<=' | '>' | '>=' | '=='.
+  conditionField    String
+  conditionOperator String
+  conditionValue    Float
+
+  // Action: THEN increase <actionField> by <actionValue>, applied as a straight addition
+  // to the costing input (no engine.ts change needed - see computeSet.ts).
+  // actionField: 'REJECTION_PCT' (actionValue is a fraction, e.g. 0.03 = +3 points) |
+  // 'WEAVING_SIZING_COST_PER_KG' (actionValue is a flat Rs./kg addition).
+  actionField String
+  actionValue Float
+
+  createdById Int
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model Notification {
   id        Int      @id @default(autoincrement())
   userId    Int
@@ -613,7 +651,7 @@ model AuditLog {
   entityType  String
   entityId    Int
   entityLabel String
-  action      String   // "CREATE" | "UPDATE"
+  action      String   // "CREATE" | "UPDATE" | "DELETE"
   changesJson String   // JSON array of { field, oldValue, newValue }
   changedById Int
   changedBy   User     @relation(fields: [changedById], references: [id])

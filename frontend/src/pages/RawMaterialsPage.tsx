@@ -29,6 +29,7 @@ export function RawMaterialsPage() {
   const [validFrom, setValidFrom] = useState(new Date().toISOString().slice(0, 10));
   const [validTo, setValidTo] = useState('');
   const [filterText, setFilterText] = useState('');
+  const [rejectDialog, setRejectDialog] = useState<{ rateId: number; reasonInput: string } | null>(null);
 
   function load() {
     api.get<RawMaterial[]>('/raw-materials').then(setMaterials).catch((e) => setError(e.message));
@@ -87,8 +88,10 @@ export function RawMaterialsPage() {
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }
-  async function reject(rateId: number) {
-    const reason = prompt('Reason for rejecting this rate (optional):') || undefined;
+  function reject(rateId: number) {
+    setRejectDialog({ rateId, reasonInput: '' });
+  }
+  async function doReject(rateId: number, reason: string | undefined) {
     try {
       await api.post(`/raw-materials/rates/${rateId}/reject`, { reason });
       load();
@@ -296,6 +299,35 @@ export function RawMaterialsPage() {
             </button>
             <button className="btn primary" onClick={submitRate}>
               Submit for approval
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {rejectDialog && (
+        <Modal title="Reject rate" onClose={() => setRejectDialog(null)}>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Reason for rejecting this rate (optional):
+          </p>
+          <input
+            style={{ width: '100%' }}
+            value={rejectDialog.reasonInput}
+            onChange={(e) => setRejectDialog({ ...rejectDialog, reasonInput: e.target.value })}
+            autoFocus
+          />
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setRejectDialog(null)}>
+              Cancel
+            </button>
+            <button
+              className="btn danger"
+              onClick={() => {
+                const { rateId, reasonInput } = rejectDialog;
+                setRejectDialog(null);
+                doReject(rateId, reasonInput.trim() || undefined);
+              }}
+            >
+              Reject
             </button>
           </div>
         </Modal>

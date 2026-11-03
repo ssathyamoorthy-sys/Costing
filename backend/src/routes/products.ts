@@ -211,8 +211,9 @@ const productSchema = z.object({
   secondRejectionPct: z.number().min(0).max(1).optional(),
   // Color method: PIECE_DYED (default) or YARN_DYED - see schema.prisma.
   colorMethod: z.enum(['PIECE_DYED', 'YARN_DYED']).optional(),
-  // YARN_DYED only: per-product override of the general "yarnDyedMoqKg" setting - see
-  // schema.prisma and computeSet.ts.
+  // Superseded by ScenarioRule (a PRODUCT-scoped rule does this job now) - see
+  // schema.prisma's comment on this field. Kept accepted here only so old payloads don't
+  // 400; no UI writes it anymore.
   yarnDyedMoqKgOverride: z.number().positive().optional().nullable(),
   yarnDyeingProcessLossPct: z.number().min(0).max(1).optional(),
   washingCostPerKg: z.number().nonnegative().optional(),

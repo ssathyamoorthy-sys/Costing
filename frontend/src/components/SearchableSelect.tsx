@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
-export interface SearchableSelectOption {
-  value: number;
+export interface SearchableSelectOption<T extends string | number = number> {
+  value: T;
   label: string;
   sublabel?: string;
 }
@@ -10,7 +10,10 @@ export interface SearchableSelectOption {
 // `options` (value/label/sublabel), `value` (0 or '' means "nothing selected"), and `onChange`.
 // Used for the master-data pickers that get long (Raw Material, Product, Customer, HSN Code) -
 // plain <select>s stay in place everywhere else (short, fixed lists don't need this).
-export function SearchableSelect({
+//
+// Generic over T so it also works for free-text string fields (e.g. Color) via `allowFreeText`,
+// not just numeric master-data ids - see that prop's doc below.
+export function SearchableSelect<T extends string | number = number>({
   value,
   onChange,
   options,
@@ -18,16 +21,23 @@ export function SearchableSelect({
   disabled,
   style,
   recentValues,
+  allowFreeText,
 }: {
-  value: number | '';
-  onChange: (value: number | '') => void;
-  options: SearchableSelectOption[];
+  value: T | '';
+  onChange: (value: T | '') => void;
+  options: SearchableSelectOption<T>[];
   placeholder?: string;
   disabled?: boolean;
   style?: React.CSSProperties;
   // Most-recent-first ids (see useRecentItems) - pinned at the top, under a "Recent" label,
   // only while the query is empty (typing searches everything, recency stops mattering).
-  recentValues?: number[];
+  recentValues?: T[];
+  // When true, this isn't a strict "pick from the list" selector - closing the dropdown
+  // (click-outside or blur) with unsaved typed text commits that raw text as the value
+  // instead of discarding it (the default, correct behavior for id-pickers that must
+  // resolve to a real master row). Escape still discards, even in this mode - that's the
+  // one explicit "cancel" gesture. Only meaningful for string-valued T (e.g. Color).
+  allowFreeText?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -41,22 +51,29 @@ export function SearchableSelect({
     ? options.filter((o) => `${o.label} ${o.sublabel ?? ''}`.toLowerCase().includes(trimmedQuery.toLowerCase()))
     : options;
   const recentOptions = !trimmedQuery && recentValues?.length
-    ? (recentValues.map((id) => options.find((o) => o.value === id)).filter(Boolean) as SearchableSelectOption[])
+    ? (recentValues.map((id) => options.find((o) => o.value === id)).filter(Boolean) as SearchableSelectOption<T>[])
     : [];
   const recentIds = new Set(recentOptions.map((o) => o.value));
   const otherOptions = searched.filter((o) => !recentIds.has(o.value));
   const filtered = [...recentOptions, ...otherOptions]; // one ordered list, drives keyboard highlight index
 
+  function closeAndMaybeCommit() {
+    if (allowFreeText && open && trimmedQuery) {
+      onChange(trimmedQuery as T);
+    }
+    setOpen(false);
+    setQuery('');
+  }
+
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setQuery('');
+        closeAndMaybeCommit();
       }
     }
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
-  }, []);
+  });
 
   function openDropdown() {
     if (disabled) return;
@@ -65,7 +82,7 @@ export function SearchableSelect({
     setHighlighted(0);
   }
 
-  function choose(v: number | '') {
+  function choose(v: T | '') {
     onChange(v);
     setOpen(false);
     setQuery('');
@@ -88,14 +105,22 @@ export function SearchableSelect({
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const opt = filtered[highlighted];
-      if (opt) choose(opt.value);
+      if (opt) {
+        choose(opt.value);
+      } else if (allowFreeText && trimmedQuery) {
+        choose(trimmedQuery as T);
+      }
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      // Escape is the one explicit "cancel" gesture - discards typed text even in
+      // allowFreeText mode, unlike blur/click-outside which commit it.
       setOpen(false);
       setQuery('');
       inputRef.current?.blur();
     }
   }
+
+  const displayValue = open ? query : selected?.label ?? (allowFreeText && value !== '' ? String(value) : '');
 
   return (
     <div ref={containerRef} className="searchable-select" style={style}>
@@ -105,10 +130,11 @@ export function SearchableSelect({
         role="combobox"
         aria-expanded={open}
         disabled={disabled}
-        value={open ? query : selected?.label ?? ''}
+        value={displayValue}
         placeholder={placeholder}
         onFocus={openDropdown}
         onClick={openDropdown}
+        onBlur={closeAndMaybeCommit}
         onChange={(e) => {
           setQuery(e.target.value);
           setHighlighted(0);
@@ -127,7 +153,7 @@ export function SearchableSelect({
           >
             {placeholder}
           </div>
-          {filtered.length === 0 && <div className="searchable-select-option muted">No matches</div>}
+          {filtered.length === 0 && <div className="searchable-select-option muted">{allowFreeText ? 'No matches - press Enter to use what you typed' : 'No matches'}</div>}
           {recentOptions.length > 0 && <div className="searchable-select-group-label">Recent</div>}
           {recentOptions.map((o, i) => (
             <div

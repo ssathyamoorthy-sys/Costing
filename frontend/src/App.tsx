@@ -9,6 +9,7 @@ import { ProductEditPage } from './pages/ProductEditPage';
 import { CustomersPage } from './pages/CustomersPage';
 import { ItemTypesPage } from './pages/ItemTypesPage';
 import { ProcessingChargesPage } from './pages/ProcessingChargesPage';
+import { ScenarioRulesPage } from './pages/ScenarioRulesPage';
 import { AccessoryTypesPage } from './pages/AccessoryTypesPage';
 import { HsnCodesPage } from './pages/HsnCodesPage';
 import { ReportsPage } from './pages/ReportsPage';
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/item-types" element={<ItemTypesPage />} />
         <Route path="/processing-charges" element={<ProcessingChargesPage />} />
+        <Route path="/scenario-rules" element={<ScenarioRulesPage />} />
         <Route path="/accessory-types" element={<AccessoryTypesPage />} />
         <Route path="/hsn-codes" element={<HsnCodesPage />} />
         <Route path="/reports" element={<ReportsPage />} />

@@ -24,6 +24,7 @@ import { quoteTemplateGroupsRouter } from './routes/quoteTemplateGroups';
 import { reportsRouter } from './routes/reports';
 import { notificationsRouter } from './routes/notifications';
 import { generalSettingsRouter } from './routes/generalSettings';
+import { scenarioRulesRouter } from './routes/scenarioRules';
 import { usersRouter } from './routes/users';
 
 const app = express();
@@ -47,6 +48,7 @@ app.use('/api/quote-template-groups', quoteTemplateGroupsRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/general-settings', generalSettingsRouter);
+app.use('/api/scenario-rules', scenarioRulesRouter);
 app.use('/api/users', usersRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

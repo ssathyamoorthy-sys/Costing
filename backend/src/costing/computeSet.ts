@@ -71,34 +71,124 @@ export interface SetComputationResult {
   warnings: string[];
 }
 
-export interface MoqCheckResult {
-  underMoq: boolean;
-  effectiveRejectionPct: number;
-  warning: string | null;
+// The vocabulary a ScenarioRule row can use - see schema.prisma's comment on the model.
+// Adding a new condition/action field later is a small addition here plus one new case in
+// evaluateScenarioRulesForItem()/applyScenarioRuleDeltas() below, not a redesign.
+export const SCOPE_TYPES = ['ALL', 'COLOR_METHOD_YARN_DYED', 'PRODUCT'] as const;
+export const CONDITION_FIELDS = ['ORDER_QTY_KG', 'GSM'] as const;
+export const CONDITION_OPERATORS = ['<', '<=', '>', '>=', '=='] as const;
+export const ACTION_FIELDS = ['REJECTION_PCT', 'WEAVING_SIZING_COST_PER_KG'] as const;
+
+export interface ScenarioRuleInput {
+  id: number;
+  name: string;
+  scopeType: string;
+  scopeProductId: number | null;
+  conditionField: string;
+  conditionOperator: string;
+  conditionValue: number;
+  actionField: string;
+  actionValue: number;
+}
+
+export interface ScenarioRuleMatch {
+  rule: ScenarioRuleInput;
+  factValue: number;
+}
+
+export interface ScenarioRuleEvaluation {
+  // At most one match per actionField - when several rules target the same field, the
+  // most specific scope wins (PRODUCT > COLOR_METHOD_YARN_DYED > ALL), so a product-specific
+  // rule cleanly overrides a more general one without any extra "override" column.
+  matched: ScenarioRuleMatch[];
+  rejectionPctDelta: number;
+  weavingSizingCostPerKgDelta: number;
+}
+
+function scopeSpecificity(scopeType: string): number {
+  return scopeType === 'PRODUCT' ? 2 : scopeType === 'COLOR_METHOD_YARN_DYED' ? 1 : 0;
+}
+
+function compareCondition(factValue: number, operator: string, threshold: number): boolean {
+  switch (operator) {
+    case '<':
+      return factValue < threshold;
+    case '<=':
+      return factValue <= threshold;
+    case '>':
+      return factValue > threshold;
+    case '>=':
+      return factValue >= threshold;
+    case '==':
+      return factValue === threshold;
+    default:
+      return false;
+  }
 }
 
 /**
- * Pure decision for the yarn-dyed MOQ surcharge - isolated from the DB-aware costing loop
- * below so it's unit-testable on its own (see computeSet.test.ts). `moqThreshold: null`
- * means neither a per-product override nor the general setting is configured, so the rule
- * doesn't apply.
+ * Pure rule-matching/merge logic for one item - isolated from the DB-aware costing loop
+ * below so it's unit-testable on its own (see computeSet.test.ts). Called once per item,
+ * with that item's own GSM and its segment's shared total order weight; a segment-level
+ * condition (ORDER_QTY_KG) naturally applies identically to every item in the segment since
+ * `segmentTotalKg` doesn't vary per item, while a GSM condition varies item to item.
  */
-export function checkYarnDyedMoq(params: {
-  productCode: string;
+export function evaluateScenarioRulesForItem(params: {
+  product: { id: number; colorMethod: string };
   segmentTotalKg: number;
-  moqThreshold: number | null;
-  baseRejectionPct: number;
-  moqShortfallRejectionPct: number;
-}): MoqCheckResult {
-  const { productCode, segmentTotalKg, moqThreshold, baseRejectionPct, moqShortfallRejectionPct } = params;
-  if (moqThreshold == null || segmentTotalKg >= moqThreshold) {
-    return { underMoq: false, effectiveRejectionPct: baseRejectionPct, warning: null };
+  itemGsm: number;
+  rules: ScenarioRuleInput[];
+}): ScenarioRuleEvaluation {
+  const { product, segmentTotalKg, itemGsm, rules } = params;
+
+  const candidates: ScenarioRuleMatch[] = [];
+  for (const rule of rules) {
+    if (!(ACTION_FIELDS as readonly string[]).includes(rule.actionField)) continue;
+    const scopeMatches =
+      rule.scopeType === 'ALL' ||
+      (rule.scopeType === 'COLOR_METHOD_YARN_DYED' && product.colorMethod === 'YARN_DYED') ||
+      (rule.scopeType === 'PRODUCT' && product.id === rule.scopeProductId);
+    if (!scopeMatches) continue;
+
+    const factValue = rule.conditionField === 'ORDER_QTY_KG' ? segmentTotalKg : rule.conditionField === 'GSM' ? itemGsm : null;
+    if (factValue == null) continue;
+    if (!compareCondition(factValue, rule.conditionOperator, rule.conditionValue)) continue;
+
+    candidates.push({ rule, factValue });
   }
-  return {
-    underMoq: true,
-    effectiveRejectionPct: baseRejectionPct + moqShortfallRejectionPct,
-    warning: `Segment '${productCode}': order is ${segmentTotalKg.toFixed(0)}kg, below the ${moqThreshold}kg yarn-dyed MOQ - an extra ${(moqShortfallRejectionPct * 100).toFixed(1)}% rejection cost has been added to this segment's price.`,
-  };
+
+  // Most-specific-scope-wins per actionField, tie-broken by higher id (most recently created).
+  const byActionField = new Map<string, ScenarioRuleMatch>();
+  for (const candidate of candidates) {
+    const existing = byActionField.get(candidate.rule.actionField);
+    if (
+      !existing ||
+      scopeSpecificity(candidate.rule.scopeType) > scopeSpecificity(existing.rule.scopeType) ||
+      (scopeSpecificity(candidate.rule.scopeType) === scopeSpecificity(existing.rule.scopeType) && candidate.rule.id > existing.rule.id)
+    ) {
+      byActionField.set(candidate.rule.actionField, candidate);
+    }
+  }
+
+  const matched = [...byActionField.values()];
+  let rejectionPctDelta = 0;
+  let weavingSizingCostPerKgDelta = 0;
+  for (const { rule } of matched) {
+    if (rule.actionField === 'REJECTION_PCT') rejectionPctDelta += rule.actionValue;
+    else if (rule.actionField === 'WEAVING_SIZING_COST_PER_KG') weavingSizingCostPerKgDelta += rule.actionValue;
+  }
+
+  return { matched, rejectionPctDelta, weavingSizingCostPerKgDelta };
+}
+
+function describeScenarioRuleMatch(match: ScenarioRuleMatch, productCode: string): string {
+  const { rule, factValue } = match;
+  const fieldLabel = rule.conditionField === 'ORDER_QTY_KG' ? `order weight ${factValue.toFixed(0)}kg` : `GSM ${factValue}`;
+  const actionLabel =
+    rule.actionField === 'REJECTION_PCT'
+      ? `Rejection % increased by ${(rule.actionValue * 100).toFixed(1)} points`
+      : `Weaving cost increased by Rs.${rule.actionValue.toFixed(2)}/kg`;
+  return `Rule '${rule.name}' matched segment '${productCode}' (${fieldLabel} ${rule.conditionOperator} ${rule.conditionValue}): ${actionLabel}.`;
 }
 
 /**
@@ -126,13 +216,10 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
   }
   const freightExportPerKg = quote.freightExportPerKgOverride ?? masterFreightExportPerKg;
 
-  // Yarn-dyed MOQ: general, admin-configurable defaults (General Mapping) - see the
-  // per-segment check below. Absent entirely (no setting, no per-product override) simply
-  // means the rule doesn't apply yet, no warning needed (unlike freight, this is opt-in).
-  const moqKgSetting = await prisma.generalSetting.findUnique({ where: { key: 'yarnDyedMoqKg' } });
-  const generalMoqKg = moqKgSetting ? Number(moqKgSetting.value) : null;
-  const moqRejectionSetting = await prisma.generalSetting.findUnique({ where: { key: 'moqShortfallRejectionPct' } });
-  const moqShortfallRejectionPct = moqRejectionSetting ? Number(moqRejectionSetting.value) : 0;
+  // Scenario rules (General Mapping > Scenario Rules): admin-configurable "IF scope AND
+  // field operator value THEN increase action by amount" costing adjustments - see the
+  // per-item evaluation below. An empty/no table simply means no rules apply yet.
+  const scenarioRules: ScenarioRuleInput[] = await prisma.scenarioRule.findMany({ where: { active: true } });
 
   const allRates = await getCurrentExchangeRates();
   const exchangeRates: Record<string, number> = { INR: 1 };
@@ -217,12 +304,16 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
       resolvedYarn.push({ slot: c.slot, mixingPct: c.mixingPct, pricePerKg: resolved.pricePerKg, dyeingCostPerKg });
     }
 
-    // Builds one item's ComputedItem for a given effective rejection % - pulled out of the
-    // plain per-item loop so the yarn-dyed MOQ check below can call it twice for the same
-    // segment: once with the Product's normal rejectionPct (to learn the segment's real
-    // finished-weight total), and - only if that total is under MOQ - again with the
-    // shortfall surcharge added, replacing the first pass's results for this segment.
-    const buildComputedItem = async (itemInput: ItemInput, effectiveRejectionPct: number): Promise<ComputedItem> => {
+    // Builds one item's ComputedItem, optionally with scenario-rule-adjusted inputs -
+    // pulled out of the plain per-item loop so the rule evaluation below can call it twice
+    // for the same item: once with no overrides (to learn the segment's real finished-weight
+    // total, needed to evaluate any ORDER_QTY_KG rule), and - only for items some rule
+    // actually matched - again with the matched deltas applied, replacing the first pass's
+    // result for just that item.
+    const buildComputedItem = async (
+      itemInput: ItemInput,
+      overrides: { rejectionPct?: number; weavingSizingCostPerKg?: number } = {},
+    ): Promise<ComputedItem> => {
       const itemType = await prisma.itemType.findUnique({ where: { id: itemInput.itemTypeId } });
       if (!itemType) throw new Error(`Item type ${itemInput.itemTypeId} not found`);
 
@@ -257,13 +348,13 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         colorMethod: isYarnDyed ? 'YARN_DYED' : 'PIECE_DYED',
         itemClass: isGarment ? 'GARMENT' : 'FLAT',
         weavingWastagePct: product.weavingWastagePct,
-        weavingSizingCostPerKg,
+        weavingSizingCostPerKg: overrides.weavingSizingCostPerKg ?? weavingSizingCostPerKg,
         firstVelourCharges,
         firstVelourLossPct: product.firstVelourLossPct,
         secondVelourCharges,
         secondVelourLossPct: product.secondVelourLossPct,
         transportLocalPerKg,
-        rejectionPct: effectiveRejectionPct,
+        rejectionPct: overrides.rejectionPct ?? product.rejectionPct,
         secondRejectionPct: product.secondRejectionPct,
         yarnComponents: resolvedYarn,
         processingChargeRatePerKg,
@@ -319,31 +410,38 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
 
     let computedItems: ComputedItem[] = [];
     for (const itemInput of segInput.items) {
-      computedItems.push(await buildComputedItem(itemInput, product.rejectionPct));
+      computedItems.push(await buildComputedItem(itemInput));
     }
 
-    // Yarn-dyed MOQ: a dye house won't run a small batch without extra wastage, so an order
-    // under the effective MOQ (in finished-product Kg, a close proxy for yarn consumed -
-    // see SetInput.qtySets doc comment) gets re-costed with the shortfall surcharge folded
-    // into this segment's rejection %. Uses the real qtyKg from the pass above, which is
-    // purely geometric (L x W x GSM) and doesn't depend on rejectionPct, so there's no
-    // circularity in computing it before deciding whether to bump rejectionPct.
-    if (isYarnDyed) {
+    // Scenario rules: re-cost only the items a rule actually matched, using the real qtyKg
+    // from the pass above (purely geometric - L x W x GSM - so there's no circularity in
+    // computing it before deciding whether a rule's weight-based condition applies).
+    if (scenarioRules.length > 0) {
       const segmentTotalKg = computedItems.reduce((s, it) => s + it.qtyKg * input.qtySets, 0);
-      const moq = checkYarnDyedMoq({
-        productCode: product.code,
-        segmentTotalKg,
-        moqThreshold: product.yarnDyedMoqKgOverride ?? generalMoqKg,
-        baseRejectionPct: product.rejectionPct,
-        moqShortfallRejectionPct,
-      });
-      if (moq.underMoq) {
-        const recomputed: ComputedItem[] = [];
-        for (const itemInput of segInput.items) {
-          recomputed.push(await buildComputedItem(itemInput, moq.effectiveRejectionPct));
+      const evaluations = segInput.items.map((itemInput) =>
+        evaluateScenarioRulesForItem({ product, segmentTotalKg, itemGsm: itemInput.gsm, rules: scenarioRules }),
+      );
+
+      if (evaluations.some((ev) => ev.matched.length > 0)) {
+        const recomputed = [...computedItems];
+        for (let i = 0; i < segInput.items.length; i++) {
+          const evaluation = evaluations[i];
+          if (evaluation.matched.length === 0) continue;
+          recomputed[i] = await buildComputedItem(segInput.items[i], {
+            rejectionPct: product.rejectionPct + evaluation.rejectionPctDelta,
+            weavingSizingCostPerKg: weavingSizingCostPerKg + evaluation.weavingSizingCostPerKgDelta,
+          });
         }
         computedItems = recomputed;
-        if (moq.warning) warnings.push(moq.warning);
+
+        const warnedRuleIds = new Set<number>();
+        for (const evaluation of evaluations) {
+          for (const match of evaluation.matched) {
+            if (warnedRuleIds.has(match.rule.id)) continue;
+            warnedRuleIds.add(match.rule.id);
+            warnings.push(describeScenarioRuleMatch(match, product.code));
+          }
+        }
       }
     }
 

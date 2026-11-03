@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, openBinary, uploadFile } from '../api';
 import type {
@@ -22,6 +22,7 @@ import type {
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { AiExtractModal } from '../components/AiExtractModal';
+import { Modal } from '../components/Modal';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { useRecentItems } from '../hooks/useRecentItems';
 import { ALLOCATED_INCOTERMS, INCOTERM_LABELS, computeFreightAllocation } from '../lib/freightAllocation';
@@ -168,6 +169,58 @@ function emptySetForm(): SetForm {
   return { color: '', articleRef: '', qtySets: '1', targetPrice: '', segments: [emptySegment()] };
 }
 
+// Replace native window.confirm()/window.prompt() (no styling, block the whole tab, no
+// keyboard trap/Escape handling) with Modal-based equivalents - state-driven since a React
+// modal can't block execution synchronously the way the native dialogs did, so each call
+// site passes its "what to do next" as onConfirm/onSubmit instead of branching on a return
+// value inline.
+interface ConfirmDialogState {
+  title?: string;
+  message: ReactNode;
+  confirmLabel?: string;
+  danger?: boolean;
+  onConfirm: () => void;
+}
+interface PromptDialogState {
+  title: string;
+  message: string;
+  defaultValue?: string;
+  multiline?: boolean;
+  submitLabel?: string;
+  onSubmit: (value: string) => void;
+}
+
+function PromptDialogModal({ state, onClose }: { state: PromptDialogState; onClose: () => void }) {
+  const [value, setValue] = useState(state.defaultValue ?? '');
+  return (
+    <Modal title={state.title} onClose={onClose}>
+      <p className="muted" style={{ marginTop: 0 }}>
+        {state.message}
+      </p>
+      {state.multiline ? (
+        // eslint-disable-next-line jsx-a11y/no-autofocus
+        <textarea rows={4} style={{ width: '100%' }} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+      ) : (
+        <input style={{ width: '100%' }} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+      )}
+      <div className="modal-actions">
+        <button className="btn" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          className="btn primary"
+          onClick={() => {
+            onClose();
+            state.onSubmit(value);
+          }}
+        >
+          {state.submitLabel ?? 'Save'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export function QuoteDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -181,6 +234,8 @@ export function QuoteDetailPage() {
   const [hsnCodes, setHsnCodes] = useState<HsnCode[]>([]);
   const [colors, setColors] = useState<ProcessingCharge[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [promptDialog, setPromptDialog] = useState<PromptDialogState | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -249,11 +304,14 @@ export function QuoteDetailPage() {
     if (error) window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [error]);
   useEffect(() => {
-    api.get<Product[]>('/products').then(setProducts);
-    api.get<ItemType[]>('/item-types').then(setItemTypes);
-    api.get<RawMaterial[]>('/raw-materials').then(setRawMaterials);
-    api.get<ProcessingCharge[]>('/processing-charges').then(setColors);
-    api.get<HsnCode[]>('/hsn-codes').then(setHsnCodes);
+    // Each master-data list the Set form needs - a silently-failed fetch used to just leave
+    // its picker permanently empty with no explanation, which looked like a broken dropdown.
+    const onFail = (what: string) => (e: unknown) => setError(`Failed to load ${what}: ${e instanceof ApiError ? e.message : String(e)}`);
+    api.get<Product[]>('/products').then(setProducts).catch(onFail('products'));
+    api.get<ItemType[]>('/item-types').then(setItemTypes).catch(onFail('item types'));
+    api.get<RawMaterial[]>('/raw-materials').then(setRawMaterials).catch(onFail('raw materials'));
+    api.get<ProcessingCharge[]>('/processing-charges').then(setColors).catch(onFail('colors'));
+    api.get<HsnCode[]>('/hsn-codes').then(setHsnCodes).catch(onFail('HSN codes'));
   }, []);
   useEffect(() => {
     if (!quote) return;
@@ -451,55 +509,58 @@ export function QuoteDetailPage() {
     setAttemptedSubmit(false);
   }
 
-  async function saveLineAsTemplate(lineId: number) {
+  function saveLineAsTemplate(lineId: number) {
     const line = quote!.lines.find((l) => l.id === lineId);
-    const name = prompt('Name this template (e.g. "Greenline Standard Gift Set"):', line?.articleRef ?? '');
-    if (!name) return;
+    setPromptDialog({
+      title: 'Save as template',
+      message: 'Name this template (e.g. "Greenline Standard Gift Set"):',
+      defaultValue: line?.articleRef ?? '',
+      onSubmit: (name) => {
+        if (name.trim()) doSaveLineAsTemplate(lineId, name.trim());
+      },
+    });
+  }
+  async function doSaveLineAsTemplate(lineId: number, name: string, overwrite = false) {
     try {
-      await api.post(`/quotes/${quote!.id}/lines/${lineId}/save-as-template`, { name });
+      await api.post(`/quotes/${quote!.id}/lines/${lineId}/save-as-template`, { name, overwrite: overwrite || undefined });
       const list = await api.get<QuoteTemplateSummary[]>(`/quote-templates?customerId=${quote!.customerId}`);
       setTemplates(list);
-      alert(`Saved as template "${name}". It'll show up under "Load from template" next time you quote this customer.`);
+      setImportMessage(`Saved as template "${name}". It'll show up under "Load from template" next time you quote this customer.`);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.body?.existingTemplateId) {
-        const overwrite = confirm(`${e.body.error}. Overwrite it with this set's current recipe?`);
-        if (overwrite) {
-          try {
-            await api.post(`/quotes/${quote!.id}/lines/${lineId}/save-as-template`, { name, overwrite: true });
-            const list = await api.get<QuoteTemplateSummary[]>(`/quote-templates?customerId=${quote!.customerId}`);
-            setTemplates(list);
-            alert(`Updated template "${name}" with this set's current recipe.`);
-          } catch (e2) {
-            setError(e2 instanceof ApiError ? e2.message : String(e2));
-          }
-        }
+        setConfirmDialog({
+          message: `${e.body.error}. Overwrite it with this set's current recipe?`,
+          confirmLabel: 'Overwrite',
+          onConfirm: () => doSaveLineAsTemplate(lineId, name, true),
+        });
         return;
       }
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }
 
-  async function saveQuoteAsTemplateGroup() {
-    const name = prompt('Name this whole-quote recipe (e.g. "Greenline Monthly Order"):');
-    if (!name) return;
+  function saveQuoteAsTemplateGroup() {
+    setPromptDialog({
+      title: 'Save quote as template',
+      message: 'Name this whole-quote recipe (e.g. "Greenline Monthly Order"):',
+      onSubmit: (name) => {
+        if (name.trim()) doSaveQuoteAsTemplateGroup(name.trim());
+      },
+    });
+  }
+  async function doSaveQuoteAsTemplateGroup(name: string, overwrite = false) {
     try {
-      await api.post(`/quotes/${quote!.id}/save-as-template-group`, { name });
+      await api.post(`/quotes/${quote!.id}/save-as-template-group`, { name, overwrite: overwrite || undefined });
       const list = await api.get<QuoteTemplateGroupSummary[]>(`/quote-template-groups?customerId=${quote!.customerId}`);
       setTemplateGroups(list);
-      alert(`Saved as recipe "${name}" (${quote!.lines.length} set(s)). It'll show up under "Apply saved recipe" next time you quote this customer.`);
+      setImportMessage(`Saved as recipe "${name}" (${quote!.lines.length} set(s)). It'll show up under "Apply saved recipe" next time you quote this customer.`);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.body?.existingGroupId) {
-        const overwrite = confirm(`${e.body.error}. Overwrite it with this quote's current sets?`);
-        if (overwrite) {
-          try {
-            await api.post(`/quotes/${quote!.id}/save-as-template-group`, { name, overwrite: true });
-            const list = await api.get<QuoteTemplateGroupSummary[]>(`/quote-template-groups?customerId=${quote!.customerId}`);
-            setTemplateGroups(list);
-            alert(`Updated recipe "${name}" with this quote's current ${quote!.lines.length} set(s).`);
-          } catch (e2) {
-            setError(e2 instanceof ApiError ? e2.message : String(e2));
-          }
-        }
+        setConfirmDialog({
+          message: `${e.body.error}. Overwrite it with this quote's current sets?`,
+          confirmLabel: 'Overwrite',
+          onConfirm: () => doSaveQuoteAsTemplateGroup(name, true),
+        });
         return;
       }
       setError(e instanceof ApiError ? e.message : String(e));
@@ -549,7 +610,13 @@ export function QuoteDetailPage() {
   }
 
   function cancelForm() {
-    if (formDirty && !confirm('Discard your unsaved changes to this set?')) return;
+    if (formDirty) {
+      setConfirmDialog({ message: 'Discard your unsaved changes to this set?', confirmLabel: 'Discard', danger: true, onConfirm: doCancelForm });
+      return;
+    }
+    doCancelForm();
+  }
+  function doCancelForm() {
     setShowForm(false);
     setEditingLineId(null);
     setAiHints(null);
@@ -741,8 +808,10 @@ export function QuoteDetailPage() {
     }
   }
 
-  async function removeLine(lineId: number) {
-    if (!confirm('Remove this set?')) return;
+  function removeLine(lineId: number) {
+    setConfirmDialog({ message: 'Remove this set?', confirmLabel: 'Remove', danger: true, onConfirm: () => doRemoveLine(lineId) });
+  }
+  async function doRemoveLine(lineId: number) {
     try {
       await api.del(`/quotes/${quote!.id}/lines/${lineId}`);
       load();
@@ -767,8 +836,16 @@ export function QuoteDetailPage() {
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }
-  async function rejectQuote() {
-    const remarks = prompt('Reason for rejecting this quote:') || undefined;
+  function rejectQuote() {
+    setPromptDialog({
+      title: 'Reject quote',
+      message: 'Reason for rejecting this quote:',
+      multiline: true,
+      submitLabel: 'Reject',
+      onSubmit: (remarks) => doRejectQuote(remarks.trim() || undefined),
+    });
+  }
+  async function doRejectQuote(remarks: string | undefined) {
     try {
       await api.post(`/quotes/${quote!.id}/reject`, { remarks });
       load();
@@ -792,8 +869,15 @@ export function QuoteDetailPage() {
       setError(e instanceof ApiError ? e.message : String(e));
     }
   }
-  async function deleteQuote() {
-    if (!confirm(`Delete quote ${quote!.quoteNo}? This cannot be undone.`)) return;
+  function deleteQuote() {
+    setConfirmDialog({
+      message: `Delete quote ${quote!.quoteNo}? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: doDeleteQuote,
+    });
+  }
+  async function doDeleteQuote() {
     try {
       await api.del(`/quotes/${quote!.id}`);
       navigate('/quotes');
@@ -802,13 +886,21 @@ export function QuoteDetailPage() {
     }
   }
 
-  async function lockQuote() {
-    if (
-      !confirm(
-        'Lock & Finalize this quote? A permanent Cost Verification Number (CVN) will be generated, and pricing can never be changed again (only an Admin could still touch it). This cannot be undone.',
-      )
-    )
-      return;
+  function lockQuote() {
+    setConfirmDialog({
+      title: 'Lock & Finalize',
+      message: (
+        <>
+          A permanent Cost Verification Number (CVN) will be generated, and pricing can never be changed again (only an Admin could still
+          touch it). <strong>This cannot be undone.</strong>
+        </>
+      ),
+      confirmLabel: 'Lock & Finalize',
+      danger: true,
+      onConfirm: doLockQuote,
+    });
+  }
+  async function doLockQuote() {
     try {
       await api.post(`/quotes/${quote!.id}/lock`);
       load();
@@ -2010,12 +2102,13 @@ export function QuoteDetailPage() {
           <div className="form-grid">
             <div className="field">
               <label>Color</label>
-              <input list="colors" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
-              <datalist id="colors">
-                {colors.map((c) => (
-                  <option key={c.id} value={c.color} />
-                ))}
-              </datalist>
+              <SearchableSelect<string>
+                value={form.color}
+                onChange={(v) => setForm({ ...form, color: v === '' ? '' : v })}
+                options={colors.map((c) => ({ value: c.color, label: c.color }))}
+                allowFreeText
+                placeholder="Type or pick a color..."
+              />
               <FieldError show={attemptedSubmit && !form.color} message="Color is required." />
             </div>
             <div className="field">
@@ -2355,6 +2448,28 @@ export function QuoteDetailPage() {
           }}
         />
       )}
+
+      {confirmDialog && (
+        <Modal title={confirmDialog.title ?? 'Please confirm'} onClose={() => setConfirmDialog(null)}>
+          <p style={{ marginTop: 0 }}>{confirmDialog.message}</p>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setConfirmDialog(null)}>
+              Cancel
+            </button>
+            <button
+              className={`btn ${confirmDialog.danger ? 'danger' : 'primary'}`}
+              onClick={() => {
+                const onConfirm = confirmDialog.onConfirm;
+                setConfirmDialog(null);
+                onConfirm();
+              }}
+            >
+              {confirmDialog.confirmLabel ?? 'Confirm'}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {promptDialog && <PromptDialogModal state={promptDialog} onClose={() => setPromptDialog(null)} />}
     </div>
   );
 }

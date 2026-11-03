@@ -48,6 +48,27 @@ export interface ProcessingCharge {
   ratePerKg: number;
 }
 
+export type ScenarioRuleScopeType = 'ALL' | 'COLOR_METHOD_YARN_DYED' | 'PRODUCT';
+export type ScenarioRuleConditionField = 'ORDER_QTY_KG' | 'GSM';
+export type ScenarioRuleConditionOperator = '<' | '<=' | '>' | '>=' | '==';
+export type ScenarioRuleActionField = 'REJECTION_PCT' | 'WEAVING_SIZING_COST_PER_KG';
+
+export interface ScenarioRule {
+  id: number;
+  name: string;
+  active: boolean;
+  scopeType: ScenarioRuleScopeType;
+  scopeProductId?: number | null;
+  scopeProduct?: { code: string; name: string | null } | null;
+  conditionField: ScenarioRuleConditionField;
+  conditionOperator: ScenarioRuleConditionOperator;
+  conditionValue: number;
+  actionField: ScenarioRuleActionField;
+  actionValue: number;
+  createdBy?: { name: string };
+  createdAt: string;
+}
+
 export interface AccessoryType {
   id: number;
   name: string;

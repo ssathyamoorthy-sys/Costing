@@ -13,6 +13,7 @@ const NAV: { to: string; label: string; roles: Role[] }[] = [
   { to: '/customers', label: 'Customer Master', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/item-types', label: 'Item Types (Stitching/Packing)', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/processing-charges', label: 'Processing Charges', roles: ['ADMIN', 'SUPERVISOR'] },
+  { to: '/scenario-rules', label: 'Scenario Rules', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/accessory-types', label: 'Accessory Types', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/hsn-codes', label: 'HSN Master (DBK/ROSCTL)', roles: ['ADMIN', 'SUPERVISOR'] },
   { to: '/exchange-rates', label: 'Exchange Rates', roles: ['ADMIN', 'SUPERVISOR'] },

@@ -10,8 +10,6 @@ interface Setting {
 
 const LABELS: Record<string, string> = {
   freightExportPerKg: 'Export freight (₹/kg)',
-  yarnDyedMoqKg: 'Yarn-dyed MOQ (Kg per article)',
-  moqShortfallRejectionPct: 'MOQ shortfall rejection surcharge (fraction, e.g. 0.05 = 5%)',
 };
 
 export function GeneralSettingsPage() {
@@ -57,7 +55,10 @@ export function GeneralSettingsPage() {
       <div className="toolbar">
         <h2>General Mapping</h2>
       </div>
-      <p className="muted">Company-wide costing settings that don't vary by product or customer.</p>
+      <p className="muted">
+        Company-wide costing settings that don't vary by product or customer. For conditional costing adjustments (e.g. "if under a
+        quantity threshold, increase rejection %"), see Scenario Rules.
+      </p>
       {error && <Alert type="error">{error}</Alert>}
       <div className="panel">
         <table>

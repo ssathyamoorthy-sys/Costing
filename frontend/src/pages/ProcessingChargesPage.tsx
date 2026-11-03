@@ -4,6 +4,8 @@ import type { ProcessingCharge } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
+import { SortableTh } from '../components/SortableTh';
+import { useSortableTable } from '../hooks/useSortableTable';
 
 const empty = { color: '', ratePerKg: 0 };
 
@@ -20,6 +22,11 @@ export function ProcessingChargesPage() {
     api.get<ProcessingCharge[]>('/processing-charges').then(setItems).catch((e) => setError(e.message));
   }
   useEffect(load, []);
+
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(items, {
+    color: (c) => c.color,
+    ratePerKg: (c) => c.ratePerKg,
+  });
 
   function openNew() {
     setEditing(null);
@@ -59,13 +66,13 @@ export function ProcessingChargesPage() {
         <table>
           <thead>
             <tr>
-              <th>Color</th>
-              <th className="right">Rate/Kg</th>
+              <SortableTh label="Color" sortKey="color" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Rate/Kg" sortKey="ratePerKg" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
               {canEdit && <th />}
             </tr>
           </thead>
           <tbody>
-            {items.map((it) => (
+            {sorted.map((it) => (
               <tr key={it.id}>
                 <td>{it.color}</td>
                 <td className="right mono">₹{it.ratePerKg}</td>

@@ -222,17 +222,23 @@ async function main() {
     create: { key: 'freightExportPerKg', value: '13' },
   });
 
-  console.log('Seeding general settings (yarn-dyed MOQ)...');
-  await prisma.generalSetting.upsert({
-    where: { key: 'yarnDyedMoqKg' },
-    update: {},
-    create: { key: 'yarnDyedMoqKg', value: '1000' },
-  });
-  await prisma.generalSetting.upsert({
-    where: { key: 'moqShortfallRejectionPct' },
-    update: {},
-    create: { key: 'moqShortfallRejectionPct', value: '0.05' },
-  });
+  console.log('Seeding scenario rules (yarn-dyed MOQ default)...');
+  const moqRuleName = 'Yarn-dyed MOQ shortfall (under 1000kg)';
+  const existingMoqRule = await prisma.scenarioRule.findFirst({ where: { name: moqRuleName } });
+  if (!existingMoqRule) {
+    await prisma.scenarioRule.create({
+      data: {
+        name: moqRuleName,
+        scopeType: 'COLOR_METHOD_YARN_DYED',
+        conditionField: 'ORDER_QTY_KG',
+        conditionOperator: '<',
+        conditionValue: 1000,
+        actionField: 'REJECTION_PCT',
+        actionValue: 0.05,
+        createdById: admin.id,
+      },
+    });
+  }
 
   console.log('Done. Seeded users (username / password):');
   console.log('  admin / ChangeMe123!');

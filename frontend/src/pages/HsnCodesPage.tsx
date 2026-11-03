@@ -4,6 +4,8 @@ import type { HsnCode } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
+import { SortableTh } from '../components/SortableTh';
+import { useSortableTable } from '../hooks/useSortableTable';
 
 const empty = { description: '', hsCode: '', uom: 'PCS', dbkPct: 0, rosctlRodepPct: 0 };
 
@@ -20,6 +22,15 @@ export function HsnCodesPage() {
     api.get<HsnCode[]>('/hsn-codes').then(setItems).catch((e) => setError(e.message));
   }
   useEffect(load, []);
+
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(items, {
+    description: (it) => it.description,
+    hsCode: (it) => it.hsCode,
+    uom: (it) => it.uom,
+    dbkPct: (it) => it.dbkPct,
+    rosctlRodepPct: (it) => it.rosctlRodepPct,
+    total: (it) => it.dbkPct + it.rosctlRodepPct,
+  });
 
   function openNew() {
     setEditing(null);
@@ -65,17 +76,17 @@ export function HsnCodesPage() {
         <table>
           <thead>
             <tr>
-              <th>Description</th>
-              <th>HS Code</th>
-              <th>UOM</th>
-              <th className="right">DBK %</th>
-              <th className="right">ROSCTL/RODEP %</th>
-              <th className="right">Total Incentive %</th>
+              <SortableTh label="Description" sortKey="description" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="HS Code" sortKey="hsCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="UOM" sortKey="uom" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <SortableTh label="DBK %" sortKey="dbkPct" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+              <SortableTh label="ROSCTL/RODEP %" sortKey="rosctlRodepPct" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
+              <SortableTh label="Total Incentive %" sortKey="total" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="right" />
               {canEdit && <th />}
             </tr>
           </thead>
           <tbody>
-            {items.map((it) => (
+            {sorted.map((it) => (
               <tr key={it.id}>
                 <td>{it.description}</td>
                 <td className="mono">{it.hsCode}</td>

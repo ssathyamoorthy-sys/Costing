@@ -1,6 +1,6 @@
 import { prisma } from './prisma';
 
-export type AuditEntityType = 'Product' | 'Customer' | 'ProcessingCharge' | 'HsnCode' | 'ExchangeRate' | 'GeneralSetting';
+export type AuditEntityType = 'Product' | 'Customer' | 'ProcessingCharge' | 'HsnCode' | 'ExchangeRate' | 'GeneralSetting' | 'ScenarioRule';
 
 export interface FieldChange {
   field: string;
@@ -36,20 +36,22 @@ function diffFields(before: Record<string, unknown> | null, after: Record<string
 }
 
 /**
- * Records one audit-log entry for a create or update on a master record. `before`/`after`
- * should be plain scalar field objects (no relations) - pass null `before` for a create. A
- * no-op update (nothing actually changed) is silently skipped rather than logged as noise.
+ * Records one audit-log entry for a create, update, or delete on a master record.
+ * `before`/`after` should be plain scalar field objects (no relations) - pass null `before`
+ * for a create, and null `after` for a delete. A no-op update (nothing actually changed) is
+ * silently skipped rather than logged as noise.
  */
 export async function recordAuditLog(opts: {
   entityType: AuditEntityType;
   entityId: number;
   entityLabel: string;
-  action: 'CREATE' | 'UPDATE';
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
   before: Record<string, unknown> | null;
-  after: Record<string, unknown>;
+  after: Record<string, unknown> | null;
   changedById: number;
 }) {
-  const changes = diffFields(opts.before, opts.after);
+  // A delete has no "after" - record what the row looked like right before it was removed.
+  const changes = opts.action === 'DELETE' ? diffFields(null, opts.before ?? {}) : diffFields(opts.before, opts.after ?? {});
   if (opts.action === 'UPDATE' && changes.length === 0) return;
 
   await prisma.auditLog.create({

@@ -3,6 +3,9 @@ import { api, ApiError } from '../api';
 import type { Customer, QuoteTemplate, QuoteTemplateGroup, QuoteTemplateGroupSummary, QuoteTemplateSummary } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
+import { Modal } from '../components/Modal';
+import { SortableTh } from '../components/SortableTh';
+import { useSortableTable } from '../hooks/useSortableTable';
 
 function templateSizeLabel(item: { lengthCm: number; widthCm: number; fabricConsumptionSqm?: number | null }) {
   return item.fabricConsumptionSqm ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.widthCm}x${item.lengthCm}cm`;
@@ -24,6 +27,7 @@ export function TemplatesPage() {
   const [expanded, setExpanded] = useState<{ kind: 'template' | 'group'; id: number } | null>(null);
   const [expandedTemplate, setExpandedTemplate] = useState<QuoteTemplate | null>(null);
   const [expandedGroup, setExpandedGroup] = useState<QuoteTemplateGroup | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ message: string; onConfirm: () => void } | null>(null);
 
   useEffect(() => {
     api.get<Customer[]>('/customers').then(setCustomers);
@@ -41,6 +45,21 @@ export function TemplatesPage() {
       .catch((e) => setError(e instanceof ApiError ? e.message : String(e)));
   }
   useEffect(load, [customerId]);
+
+  const sortableTemplates = useSortableTable(templates, {
+    name: (t) => t.name,
+    color: (t) => t.color,
+    articleRef: (t) => t.articleRef ?? '',
+    qtySets: (t) => t.qtySets,
+    createdBy: (t) => t.createdBy?.name ?? '',
+    createdAt: (t) => t.createdAt,
+  });
+  const sortableGroups = useSortableTable(groups, {
+    name: (g) => g.name,
+    setCount: (g) => g.setCount,
+    createdBy: (g) => g.createdBy?.name ?? '',
+    createdAt: (g) => g.createdAt,
+  });
 
   function startRename(kind: 'template' | 'group', id: number, currentName: string) {
     setRenaming({ kind, id });
@@ -60,8 +79,10 @@ export function TemplatesPage() {
     }
   }
 
-  async function deleteTemplate(id: number, name: string) {
-    if (!confirm(`Delete template "${name}"? This cannot be undone.`)) return;
+  function deleteTemplate(id: number, name: string) {
+    setConfirmDelete({ message: `Delete template "${name}"? This cannot be undone.`, onConfirm: () => doDeleteTemplate(id) });
+  }
+  async function doDeleteTemplate(id: number) {
     try {
       await api.del(`/quote-templates/${id}`);
       if (expanded?.kind === 'template' && expanded.id === id) setExpanded(null);
@@ -71,8 +92,10 @@ export function TemplatesPage() {
     }
   }
 
-  async function deleteGroup(id: number, name: string) {
-    if (!confirm(`Delete recipe "${name}" and all its sets? This cannot be undone.`)) return;
+  function deleteGroup(id: number, name: string) {
+    setConfirmDelete({ message: `Delete recipe "${name}" and all its sets? This cannot be undone.`, onConfirm: () => doDeleteGroup(id) });
+  }
+  async function doDeleteGroup(id: number) {
     try {
       await api.del(`/quote-template-groups/${id}`);
       if (expanded?.kind === 'group' && expanded.id === id) setExpanded(null);
@@ -173,17 +196,42 @@ export function TemplatesPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Color</th>
-                  <th>Article Ref</th>
-                  <th className="right">Qty Sets</th>
-                  <th>Created by</th>
-                  <th>Created</th>
+                  <SortableTh label="Name" sortKey="name" activeKey={sortableTemplates.sortKey} dir={sortableTemplates.sortDir} onSort={sortableTemplates.toggleSort} />
+                  <SortableTh label="Color" sortKey="color" activeKey={sortableTemplates.sortKey} dir={sortableTemplates.sortDir} onSort={sortableTemplates.toggleSort} />
+                  <SortableTh
+                    label="Article Ref"
+                    sortKey="articleRef"
+                    activeKey={sortableTemplates.sortKey}
+                    dir={sortableTemplates.sortDir}
+                    onSort={sortableTemplates.toggleSort}
+                  />
+                  <SortableTh
+                    label="Qty Sets"
+                    sortKey="qtySets"
+                    activeKey={sortableTemplates.sortKey}
+                    dir={sortableTemplates.sortDir}
+                    onSort={sortableTemplates.toggleSort}
+                    className="right"
+                  />
+                  <SortableTh
+                    label="Created by"
+                    sortKey="createdBy"
+                    activeKey={sortableTemplates.sortKey}
+                    dir={sortableTemplates.sortDir}
+                    onSort={sortableTemplates.toggleSort}
+                  />
+                  <SortableTh
+                    label="Created"
+                    sortKey="createdAt"
+                    activeKey={sortableTemplates.sortKey}
+                    dir={sortableTemplates.sortDir}
+                    onSort={sortableTemplates.toggleSort}
+                  />
                   {canEdit && <th />}
                 </tr>
               </thead>
               <tbody>
-                {templates.map((t) => (
+                {sortableTemplates.sorted.map((t) => (
                   <Fragment key={t.id}>
                     <tr>
                       <td>
@@ -245,15 +293,34 @@ export function TemplatesPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th className="right">Sets</th>
-                  <th>Created by</th>
-                  <th>Created</th>
+                  <SortableTh label="Name" sortKey="name" activeKey={sortableGroups.sortKey} dir={sortableGroups.sortDir} onSort={sortableGroups.toggleSort} />
+                  <SortableTh
+                    label="Sets"
+                    sortKey="setCount"
+                    activeKey={sortableGroups.sortKey}
+                    dir={sortableGroups.sortDir}
+                    onSort={sortableGroups.toggleSort}
+                    className="right"
+                  />
+                  <SortableTh
+                    label="Created by"
+                    sortKey="createdBy"
+                    activeKey={sortableGroups.sortKey}
+                    dir={sortableGroups.sortDir}
+                    onSort={sortableGroups.toggleSort}
+                  />
+                  <SortableTh
+                    label="Created"
+                    sortKey="createdAt"
+                    activeKey={sortableGroups.sortKey}
+                    dir={sortableGroups.sortDir}
+                    onSort={sortableGroups.toggleSort}
+                  />
                   {canEdit && <th />}
                 </tr>
               </thead>
               <tbody>
-                {groups.map((g) => (
+                {sortableGroups.sorted.map((g) => (
                   <Fragment key={g.id}>
                     <tr>
                       <td>
@@ -315,6 +382,27 @@ export function TemplatesPage() {
             </table>
           </div>
         </>
+      )}
+
+      {confirmDelete && (
+        <Modal title="Please confirm" onClose={() => setConfirmDelete(null)}>
+          <p style={{ marginTop: 0 }}>{confirmDelete.message}</p>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setConfirmDelete(null)}>
+              Cancel
+            </button>
+            <button
+              className="btn danger"
+              onClick={() => {
+                const onConfirm = confirmDelete.onConfirm;
+                setConfirmDelete(null);
+                onConfirm();
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
