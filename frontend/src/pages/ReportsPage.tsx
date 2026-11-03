@@ -202,6 +202,10 @@ function WinLossReport() {
     <div>
       <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
       <p className="muted" style={{ fontSize: 12 }}>Outcome date approximated from last update, since there's no separate "converted/lost at" timestamp.</p>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -234,6 +238,8 @@ function WinLossReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
@@ -254,11 +260,13 @@ function SalesByCustomerReport() {
   const [rows, setRows] = useState<SalesByCustomerRow[]>([]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     const qs = new URLSearchParams();
     if (from) qs.set('from', from);
     if (to) qs.set('to', to);
-    api.get<SalesByCustomerRow[]>(`/reports/sales-by-customer?${qs}`).then(setRows);
+    setLoading(true);
+    api.get<SalesByCustomerRow[]>(`/reports/sales-by-customer?${qs}`).then(setRows).finally(() => setLoading(false));
   }, [from, to]);
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
     customerName: (r) => r.customerName,
@@ -295,6 +303,10 @@ function SalesByCustomerReport() {
   return (
     <div>
       <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -331,6 +343,8 @@ function SalesByCustomerReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
@@ -347,11 +361,13 @@ function SalesByRegionReport() {
   const [rows, setRows] = useState<SalesByRegionRow[]>([]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     const qs = new URLSearchParams();
     if (from) qs.set('from', from);
     if (to) qs.set('to', to);
-    api.get<SalesByRegionRow[]>(`/reports/sales-by-region?${qs}`).then(setRows);
+    setLoading(true);
+    api.get<SalesByRegionRow[]>(`/reports/sales-by-region?${qs}`).then(setRows).finally(() => setLoading(false));
   }, [from, to]);
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
     region: (r) => r.region,
@@ -382,6 +398,10 @@ function SalesByRegionReport() {
   return (
     <div>
       <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -414,6 +434,8 @@ function SalesByRegionReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
@@ -430,8 +452,10 @@ interface MarginRow {
 function MarginProfitabilityReport() {
   const [rows, setRows] = useState<MarginRow[]>([]);
   const [groupBy, setGroupBy] = useState<'customer' | 'product'>('customer');
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    api.get<MarginRow[]>(`/reports/margin-profitability?groupBy=${groupBy}`).then(setRows);
+    setLoading(true);
+    api.get<MarginRow[]>(`/reports/margin-profitability?groupBy=${groupBy}`).then(setRows).finally(() => setLoading(false));
   }, [groupBy]);
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
     label: (r) => r.label,
@@ -471,7 +495,10 @@ function MarginProfitabilityReport() {
         </div>
         <ExportCsvButton onClick={exportCsv} />
       </div>
-      <table>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <table>
         <thead>
           <tr>
             <SortableTh label={groupBy === 'customer' ? 'Customer' : 'Product'} sortKey="label" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
@@ -507,6 +534,7 @@ function MarginProfitabilityReport() {
           )}
         </tbody>
       </table>
+      )}
     </div>
   );
 }
@@ -525,8 +553,9 @@ interface ErosionRow {
 }
 function PriceErosionReport() {
   const [rows, setRows] = useState<ErosionRow[]>([]);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    api.get<ErosionRow[]>('/reports/price-erosion').then(setRows);
+    api.get<ErosionRow[]>('/reports/price-erosion').then(setRows).finally(() => setLoading(false));
   }, []);
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
     quoteNo: (r) => r.quoteNo,
@@ -562,6 +591,10 @@ function PriceErosionReport() {
       <p className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
         Only quotes with at least one negotiation round (a price change after being quoted) appear here.
       </p>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -599,6 +632,8 @@ function PriceErosionReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
@@ -613,8 +648,9 @@ interface DbkRow {
 }
 function DbkSummaryReport() {
   const [rows, setRows] = useState<DbkRow[]>([]);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    api.get<DbkRow[]>('/reports/dbk-summary').then(setRows);
+    api.get<DbkRow[]>('/reports/dbk-summary').then(setRows).finally(() => setLoading(false));
   }, []);
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
     hsCode: (r) => r.hsCode,
@@ -636,6 +672,10 @@ function DbkSummaryReport() {
   }
   return (
     <div>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -666,6 +706,8 @@ function DbkSummaryReport() {
         )}
       </tbody>
     </table>
+        </>
+      )}
     </div>
   );
 }
@@ -684,8 +726,9 @@ interface LockedRow {
 }
 function LockedRegisterReport() {
   const [rows, setRows] = useState<LockedRow[]>([]);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    api.get<LockedRow[]>('/reports/locked-register').then(setRows);
+    api.get<LockedRow[]>('/reports/locked-register').then(setRows).finally(() => setLoading(false));
   }, []);
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
     finalReferenceNo: (r) => r.finalReferenceNo,
@@ -721,6 +764,10 @@ function LockedRegisterReport() {
   }
   return (
     <div>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -757,6 +804,8 @@ function LockedRegisterReport() {
         )}
       </tbody>
     </table>
+        </>
+      )}
     </div>
   );
 }
@@ -769,8 +818,9 @@ interface TurnaroundRow {
 }
 function ApprovalTurnaroundReport() {
   const [rows, setRows] = useState<TurnaroundRow[]>([]);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    api.get<TurnaroundRow[]>('/reports/approval-turnaround').then(setRows);
+    api.get<TurnaroundRow[]>('/reports/approval-turnaround').then(setRows).finally(() => setLoading(false));
   }, []);
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
     merchandiserName: (r) => r.merchandiserName,
@@ -794,6 +844,10 @@ function ApprovalTurnaroundReport() {
   }
   return (
     <div>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -822,6 +876,8 @@ function ApprovalTurnaroundReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
@@ -840,12 +896,14 @@ function RawMaterialHistoryReport() {
   const [rows, setRows] = useState<RateHistoryRow[]>([]);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [materialId, setMaterialId] = useState('');
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     api.get<RawMaterial[]>('/raw-materials').then(setMaterials);
   }, []);
   useEffect(() => {
     const qs = materialId ? `?rawMaterialId=${materialId}` : '';
-    api.get<RateHistoryRow[]>(`/reports/raw-material-history${qs}`).then(setRows);
+    setLoading(true);
+    api.get<RateHistoryRow[]>(`/reports/raw-material-history${qs}`).then(setRows).finally(() => setLoading(false));
   }, [materialId]);
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
     materialCode: (r) => r.materialCode,
@@ -892,6 +950,10 @@ function RawMaterialHistoryReport() {
           ))}
         </select>
       </div>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -928,6 +990,8 @@ function RawMaterialHistoryReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
@@ -936,8 +1000,10 @@ function RawMaterialHistoryReport() {
 function MasterDataReport() {
   const [which, setWhich] = useState<'customers' | 'products' | 'raw-materials'>('customers');
   const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    api.get<any[]>(`/${which}`).then(setRows);
+    setLoading(true);
+    api.get<any[]>(`/${which}`).then(setRows).finally(() => setLoading(false));
   }, [which]);
 
   const columns: Record<string, { key: string; label: string }[]> = {
@@ -986,6 +1052,10 @@ function MasterDataReport() {
           <option value="raw-materials">Raw Materials</option>
         </select>
       </div>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -1014,6 +1084,8 @@ function MasterDataReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
@@ -1035,6 +1107,7 @@ function PricingHistoryReport() {
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState('');
   const [rows, setRows] = useState<PricingHistoryRow[]>([]);
+  const [loading, setLoading] = useState(false);
   useEffect(() => {
     api.get<Product[]>('/products').then(setProducts);
   }, []);
@@ -1043,7 +1116,8 @@ function PricingHistoryReport() {
       setRows([]);
       return;
     }
-    api.get<PricingHistoryRow[]>(`/reports/pricing-history?productId=${productId}`).then(setRows);
+    setLoading(true);
+    api.get<PricingHistoryRow[]>(`/reports/pricing-history?productId=${productId}`).then(setRows).finally(() => setLoading(false));
   }, [productId]);
 
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
@@ -1104,6 +1178,10 @@ function PricingHistoryReport() {
       </div>
       {productId && (
         <div>
+          {loading ? (
+            <p className="muted">Loading...</p>
+          ) : (
+            <>
           <div style={{ marginBottom: 12 }}>
             <ExportCsvButton onClick={exportCsv} />
           </div>
@@ -1146,6 +1224,8 @@ function PricingHistoryReport() {
               )}
             </tbody>
           </table>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -1170,12 +1250,14 @@ function CurrentPricingByCustomerReport() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerId, setCustomerId] = useState('');
   const [rows, setRows] = useState<CurrentPricingRow[]>([]);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     api.get<Customer[]>('/customers').then(setCustomers);
   }, []);
   useEffect(() => {
     const qs = customerId ? `?customerId=${customerId}` : '';
-    api.get<CurrentPricingRow[]>(`/reports/current-pricing-by-customer${qs}`).then(setRows);
+    setLoading(true);
+    api.get<CurrentPricingRow[]>(`/reports/current-pricing-by-customer${qs}`).then(setRows).finally(() => setLoading(false));
   }, [customerId]);
 
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
@@ -1230,6 +1312,10 @@ function CurrentPricingByCustomerReport() {
           ))}
         </select>
       </div>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -1272,6 +1358,8 @@ function CurrentPricingByCustomerReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
@@ -1304,11 +1392,13 @@ function ChangeLogReport() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [rows, setRows] = useState<ChangeLogRow[]>([]);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     const qs = new URLSearchParams({ entityType });
     if (from) qs.set('from', from);
     if (to) qs.set('to', to);
-    api.get<ChangeLogRow[]>(`/reports/change-log?${qs}`).then(setRows);
+    setLoading(true);
+    api.get<ChangeLogRow[]>(`/reports/change-log?${qs}`).then(setRows).finally(() => setLoading(false));
   }, [entityType, from, to]);
 
   const { sorted, sortKey, sortDir, toggleSort } = useSortableTable(rows, {
@@ -1355,6 +1445,10 @@ function ChangeLogReport() {
         </div>
         <DateRangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} />
       </div>
+      {loading ? (
+        <p className="muted">Loading...</p>
+      ) : (
+        <>
       <div style={{ marginBottom: 12 }}>
         <ExportCsvButton onClick={exportCsv} />
       </div>
@@ -1397,6 +1491,8 @@ function ChangeLogReport() {
           )}
         </tbody>
       </table>
+        </>
+      )}
     </div>
   );
 }
