@@ -434,6 +434,12 @@ model QuoteLineSegmentItem {
   pieceWeightGrams Float?
   qtyKg            Float?     // pieceWeightGrams * qtyPerSet / 1000 - one set's worth
   costBreakupJson  String?    // full CostingBreakup (unit ratePerKg/ratePerPiece etc.)
+  // Snapshot of the resolved, master-data-sourced inputs (yarn rate, weaving cost, processing
+  // charge, FX rates, loss %'s, etc.) used to build costBreakupJson above - NOT the full
+  // CostingInput (excludes geometry and margin/commission, which don't "drift"). Lets the
+  // cost-revision-drift feature diff "what this item was last priced against" vs current master
+  // data, and selectively re-price just the accepted components. ResolvedCostInputs shape.
+  costInputsJson String?
 
   accessoryOverrides   QuoteLineSegmentItemAccessory[]
   packagingCharges     QuoteLineSegmentItemPackaging[]

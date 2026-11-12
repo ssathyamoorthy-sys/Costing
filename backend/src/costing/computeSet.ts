@@ -55,10 +55,47 @@ export interface SetInput {
   quoteLineId?: number;
 }
 
+// Snapshot of the resolved, master-data-sourced inputs an item's breakup was last built
+// from - everything computeCosting() takes EXCEPT: colorMethod/itemClass (structural),
+// stitching/packing costs (Item Type-sourced but intentionally not drift-tracked by this
+// feature), wcInterestPct/lcInterestPct/marginPct/commissionPct (negotiated Quote/Customer
+// commercial terms, never master rates), and geometry/qtyPcs (item-entered, never "drifts").
+// Lets the cost-revision-drift feature (quotes.ts GET/POST .../cost-check,
+// .../apply-revised-costs) diff "what this item was last priced against" vs a fresh
+// resolution, and selectively re-price just the accepted components.
+export interface ResolvedYarnComponent {
+  slot: string;
+  rawMaterialId: number;
+  mixingPct: number;
+  pricePerKg: number;
+  dyeingCostPerKg: number;
+}
+export interface ResolvedCostInputs {
+  yarnComponents: ResolvedYarnComponent[];
+  weavingSizingCostPerKg: number;
+  firstVelourCharges: number;
+  firstVelourLossPct: number;
+  secondVelourCharges: number;
+  secondVelourLossPct: number;
+  transportLocalPerKg: number;
+  processingChargeRatePerKg: number;
+  washingCostPerKg: number;
+  weavingWastagePct: number;
+  weightLossPct: number;
+  washingLossPct: number;
+  yarnDyeingProcessLossPct: number;
+  rejectionPct: number;
+  secondRejectionPct: number;
+  freightExportPerKg: number;
+  accessories: AccessoryInput[];
+  exchangeRates: Record<string, number>;
+}
+
 export interface ComputedItem extends ItemInput {
   pieceWeightGrams: number;
   qtyKg: number;
   breakup: CostingBreakup;
+  resolvedInputs: ResolvedCostInputs;
 }
 export interface ComputedSegment {
   productId: number;
@@ -282,12 +319,12 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
       throw new Error(`${product.code}: yarn mixing % totals ${mixingTotal.toFixed(1)}%, must total 100% (within 0.5%) before this set can be priced.`);
     }
 
-    const resolvedYarn: { slot: string; mixingPct: number; pricePerKg: number; dyeingCostPerKg: number }[] = [];
+    const resolvedYarn: ResolvedYarnComponent[] = [];
     for (const c of segInput.yarnComponents) {
       const dyeingCostPerKg = c.dyeingCostPerKg ?? 0;
       const override = overrideByMaterialId.get(c.rawMaterialId);
       if (override != null) {
-        resolvedYarn.push({ slot: c.slot, mixingPct: c.mixingPct, pricePerKg: override, dyeingCostPerKg });
+        resolvedYarn.push({ slot: c.slot, rawMaterialId: c.rawMaterialId, mixingPct: c.mixingPct, pricePerKg: override, dyeingCostPerKg });
         continue;
       }
       const resolved = await resolveCurrentRate(c.rawMaterialId);
@@ -301,7 +338,7 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
           `Rate for "${material?.code}" expired on ${resolved.validTo?.toDateString()} - using last known price ${resolved.pricePerKg}/kg.`,
         );
       }
-      resolvedYarn.push({ slot: c.slot, mixingPct: c.mixingPct, pricePerKg: resolved.pricePerKg, dyeingCostPerKg });
+      resolvedYarn.push({ slot: c.slot, rawMaterialId: c.rawMaterialId, mixingPct: c.mixingPct, pricePerKg: resolved.pricePerKg, dyeingCostPerKg });
     }
 
     // Builds one item's ComputedItem, optionally with scenario-rule-adjusted inputs -
@@ -344,17 +381,23 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
 
       const isGarment = itemType.sizingMethod === 'FABRIC_CONSUMPTION';
 
+      // The values actually fed into computeCosting below for the drift-trackable inputs -
+      // captured once here so the same expressions aren't duplicated between the call and the
+      // resolvedInputs snapshot (which records exactly what this item was priced against).
+      const effectiveWeavingSizingCostPerKg = overrides.weavingSizingCostPerKg ?? weavingSizingCostPerKg;
+      const effectiveRejectionPct = overrides.rejectionPct ?? product.rejectionPct;
+
       const breakup = computeCosting({
         colorMethod: isYarnDyed ? 'YARN_DYED' : 'PIECE_DYED',
         itemClass: isGarment ? 'GARMENT' : 'FLAT',
         weavingWastagePct: product.weavingWastagePct,
-        weavingSizingCostPerKg: overrides.weavingSizingCostPerKg ?? weavingSizingCostPerKg,
+        weavingSizingCostPerKg: effectiveWeavingSizingCostPerKg,
         firstVelourCharges,
         firstVelourLossPct: product.firstVelourLossPct,
         secondVelourCharges,
         secondVelourLossPct: product.secondVelourLossPct,
         transportLocalPerKg,
-        rejectionPct: overrides.rejectionPct ?? product.rejectionPct,
+        rejectionPct: effectiveRejectionPct,
         secondRejectionPct: product.secondRejectionPct,
         yarnComponents: resolvedYarn,
         processingChargeRatePerKg,
@@ -378,6 +421,27 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
         qtyPcs: itemInput.qtyPerSet,
         exchangeRates,
       });
+
+      const resolvedInputs: ResolvedCostInputs = {
+        yarnComponents: resolvedYarn,
+        weavingSizingCostPerKg: effectiveWeavingSizingCostPerKg,
+        firstVelourCharges,
+        firstVelourLossPct: product.firstVelourLossPct,
+        secondVelourCharges,
+        secondVelourLossPct: product.secondVelourLossPct,
+        transportLocalPerKg,
+        processingChargeRatePerKg,
+        washingCostPerKg,
+        weavingWastagePct: product.weavingWastagePct,
+        weightLossPct: product.weightLossPct,
+        washingLossPct: product.washingLossPct,
+        yarnDyeingProcessLossPct: product.yarnDyeingProcessLossPct,
+        rejectionPct: effectiveRejectionPct,
+        secondRejectionPct: product.secondRejectionPct,
+        freightExportPerKg,
+        accessories: finalAccessories,
+        exchangeRates,
+      };
 
       // Duty Drawback / RoDTEP - an internal profit metric only, never added to the price
       // quoted to the customer (ratePerKg/ratePerPiece above are untouched).
@@ -405,6 +469,7 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
           marginPct,
           effectiveMarginPctInclDbk: marginPct + totalIncentivePct,
         },
+        resolvedInputs,
       };
     };
 
@@ -460,4 +525,245 @@ export async function computeSet(input: SetInput): Promise<SetComputationResult>
   }
 
   return { segments: computedSegments, ratePerSet, warnings };
+}
+
+/**
+ * Rebuilds one item's ComputedItem from a given ResolvedCostInputs snapshot (typically a mix
+ * of old-stored and freshly re-resolved component values, assembled by the caller) instead of
+ * re-resolving master data from the DB - used by the cost-revision-drift "apply selected
+ * components" flow (quotes.ts POST .../apply-revised-costs), where the caller has already
+ * decided exactly which values (old vs new) to use for each drift-trackable component.
+ *
+ * Still looks up the Item Type and HSN Code by id - these are structural per-item references
+ * (sizing method, stitching/packing cost, DBK %), not drift-tracked master rates, so they're
+ * always resolved fresh, the same way marginPct/commissionPct/wcInterestPct/lcInterestPct are
+ * always passed in fresh by the caller rather than being part of ResolvedCostInputs.
+ */
+export async function buildComputedItemFromResolvedInputs(params: {
+  itemInput: ItemInput;
+  isYarnDyed: boolean;
+  resolvedInputs: ResolvedCostInputs;
+  marginPct: number;
+  commissionPct: number;
+  wcInterestPct: number;
+  lcInterestPct: number;
+}): Promise<ComputedItem> {
+  const { itemInput, isYarnDyed, resolvedInputs, marginPct, commissionPct, wcInterestPct, lcInterestPct } = params;
+
+  const itemType = await prisma.itemType.findUnique({ where: { id: itemInput.itemTypeId } });
+  if (!itemType) throw new Error(`Item type ${itemInput.itemTypeId} not found`);
+
+  let hsnCode: string | null = null;
+  let totalIncentivePct = 0;
+  if (itemInput.hsnCodeId) {
+    const hsn = await prisma.hsnCode.findUnique({ where: { id: itemInput.hsnCodeId } });
+    if (hsn) {
+      hsnCode = hsn.hsCode;
+      totalIncentivePct = hsn.dbkPct + hsn.rosctlRodepPct;
+    }
+  }
+
+  const isGarment = itemType.sizingMethod === 'FABRIC_CONSUMPTION';
+
+  const breakup = computeCosting({
+    colorMethod: isYarnDyed ? 'YARN_DYED' : 'PIECE_DYED',
+    itemClass: isGarment ? 'GARMENT' : 'FLAT',
+    weavingWastagePct: resolvedInputs.weavingWastagePct,
+    weavingSizingCostPerKg: resolvedInputs.weavingSizingCostPerKg,
+    firstVelourCharges: resolvedInputs.firstVelourCharges,
+    firstVelourLossPct: resolvedInputs.firstVelourLossPct,
+    secondVelourCharges: resolvedInputs.secondVelourCharges,
+    secondVelourLossPct: resolvedInputs.secondVelourLossPct,
+    transportLocalPerKg: resolvedInputs.transportLocalPerKg,
+    rejectionPct: resolvedInputs.rejectionPct,
+    secondRejectionPct: resolvedInputs.secondRejectionPct,
+    yarnComponents: resolvedInputs.yarnComponents,
+    processingChargeRatePerKg: resolvedInputs.processingChargeRatePerKg,
+    weightLossPct: resolvedInputs.weightLossPct,
+    yarnDyeingProcessLossPct: resolvedInputs.yarnDyeingProcessLossPct,
+    washingCostPerKg: resolvedInputs.washingCostPerKg,
+    washingLossPct: resolvedInputs.washingLossPct,
+    stitchingCostPerKg: itemInput.stitchingCostPerKgOverride ?? itemType.stitchingCostPerKg,
+    stitchingCostPerPiece: itemInput.stitchingCostPerPieceOverride ?? itemType.stitchingCostPerPiece,
+    packingCostPerKg: itemInput.packingCostPerKgOverride ?? itemType.packingCostPerKg,
+    accessories: resolvedInputs.accessories,
+    freightExportPerKg: resolvedInputs.freightExportPerKg,
+    wcInterestPct,
+    lcInterestPct,
+    marginPct,
+    commissionPct,
+    lengthCm: itemInput.lengthCm,
+    widthCm: itemInput.widthCm,
+    fabricConsumptionSqm: itemInput.fabricConsumptionSqm ?? 0,
+    gsm: itemInput.gsm,
+    qtyPcs: itemInput.qtyPerSet,
+    exchangeRates: resolvedInputs.exchangeRates,
+  });
+
+  const profitPerKgInr = breakup.finalPricePerKgInr - breakup.subtotalBeforeMargin;
+  const dbkProfitPerKgInr = totalIncentivePct * breakup.finalPricePerKgInr;
+  const profitInclDbkPerKgInr = profitPerKgInr + dbkProfitPerKgInr;
+  const profitInclDbk: Record<string, number> = {};
+  for (const [currency, rateToInr] of Object.entries(resolvedInputs.exchangeRates)) {
+    const perKg = currency === 'INR' ? profitInclDbkPerKgInr : profitInclDbkPerKgInr / rateToInr;
+    profitInclDbk[currency] = (perKg * breakup.pieceWeightGrams) / 1000;
+  }
+
+  return {
+    ...itemInput,
+    pieceWeightGrams: breakup.pieceWeightGrams,
+    qtyKg: breakup.qtyKg,
+    breakup: {
+      ...breakup,
+      hsnCode,
+      totalIncentivePct,
+      profitPerKgInr,
+      dbkProfitPerKgInr,
+      profitInclDbkPerKgInr,
+      profitInclDbk,
+      marginPct,
+      effectiveMarginPctInclDbk: marginPct + totalIncentivePct,
+    },
+    resolvedInputs,
+  };
+}
+
+// --- Cost-revision drift: bundles ResolvedCostInputs' fields into ~8-10 labeled,
+// independently accept/reject-able rows instead of 17 separate checkboxes - loss/wastage %'s
+// interact multiplicatively into a single bomMultiplier, so they're grouped as one "yield &
+// rejection assumptions" unit; yarn components and accessories are each shown as one
+// blended/aggregated figure per the same reasoning. Pure (no DB/IO), so it's unit-testable
+// directly - see computeSet.test.ts. Used by quotes.ts's GET/POST .../cost-check and
+// .../apply-revised-costs routes.
+export const COST_COMPONENT_KEYS = [
+  'yarn',
+  'weaving',
+  'firstVelour',
+  'secondVelour',
+  'transport',
+  'processing',
+  'freight',
+  'accessories',
+  'exchangeRates',
+  'yieldRejection',
+] as const;
+export type CostComponentKey = (typeof COST_COMPONENT_KEYS)[number];
+
+export const COMPONENT_LABELS: Record<CostComponentKey, string> = {
+  yarn: 'Yarn cost',
+  weaving: 'Weaving / sizing cost',
+  firstVelour: 'First velour charges',
+  secondVelour: 'Second velour charges',
+  transport: 'Transport (local)',
+  processing: 'Processing charge / washing cost',
+  freight: 'Freight (export)',
+  accessories: 'Accessories',
+  exchangeRates: 'Exchange rate',
+  yieldRejection: 'Yield & rejection assumptions',
+};
+export const COMPONENT_UNITS: Record<CostComponentKey, string> = {
+  yarn: 'Rs./kg',
+  weaving: 'Rs./kg',
+  firstVelour: 'Rs./kg',
+  secondVelour: 'Rs./kg',
+  transport: 'Rs./kg',
+  processing: 'Rs./kg',
+  freight: 'Rs./kg',
+  accessories: 'Rs./pc',
+  exchangeRates: 'INR',
+  yieldRejection: '%',
+};
+
+function blendedYarnRate(components: { pricePerKg: number; dyeingCostPerKg: number; mixingPct: number }[]): number {
+  return components.reduce((sum, c) => sum + (c.pricePerKg + c.dyeingCostPerKg) * (c.mixingPct / 100), 0);
+}
+function accessoriesTotal(accessories: { costPerPiece: number }[]): number {
+  return accessories.reduce((sum, a) => sum + a.costPerPiece, 0);
+}
+export function componentValue(key: CostComponentKey, ri: ResolvedCostInputs, currency: string): number {
+  switch (key) {
+    case 'yarn':
+      return blendedYarnRate(ri.yarnComponents);
+    case 'weaving':
+      return ri.weavingSizingCostPerKg;
+    case 'firstVelour':
+      return ri.firstVelourCharges;
+    case 'secondVelour':
+      return ri.secondVelourCharges;
+    case 'transport':
+      return ri.transportLocalPerKg;
+    case 'processing':
+      return ri.processingChargeRatePerKg || ri.washingCostPerKg;
+    case 'freight':
+      return ri.freightExportPerKg;
+    case 'accessories':
+      return accessoriesTotal(ri.accessories);
+    case 'exchangeRates':
+      return ri.exchangeRates[currency] ?? 1;
+    case 'yieldRejection':
+      return ri.rejectionPct;
+  }
+}
+export function componentChanged(key: CostComponentKey, oldRi: ResolvedCostInputs, newRi: ResolvedCostInputs): boolean {
+  switch (key) {
+    case 'yarn':
+      return JSON.stringify(oldRi.yarnComponents.map((c) => [c.rawMaterialId, c.pricePerKg, c.dyeingCostPerKg])) !==
+        JSON.stringify(newRi.yarnComponents.map((c) => [c.rawMaterialId, c.pricePerKg, c.dyeingCostPerKg]));
+    case 'weaving':
+      return oldRi.weavingSizingCostPerKg !== newRi.weavingSizingCostPerKg;
+    case 'firstVelour':
+      return oldRi.firstVelourCharges !== newRi.firstVelourCharges;
+    case 'secondVelour':
+      return oldRi.secondVelourCharges !== newRi.secondVelourCharges;
+    case 'transport':
+      return oldRi.transportLocalPerKg !== newRi.transportLocalPerKg;
+    case 'processing':
+      return oldRi.processingChargeRatePerKg !== newRi.processingChargeRatePerKg || oldRi.washingCostPerKg !== newRi.washingCostPerKg;
+    case 'freight':
+      return oldRi.freightExportPerKg !== newRi.freightExportPerKg;
+    case 'accessories':
+      return JSON.stringify(oldRi.accessories) !== JSON.stringify(newRi.accessories);
+    case 'exchangeRates':
+      return JSON.stringify(oldRi.exchangeRates) !== JSON.stringify(newRi.exchangeRates);
+    case 'yieldRejection':
+      return (
+        oldRi.weavingWastagePct !== newRi.weavingWastagePct ||
+        oldRi.firstVelourLossPct !== newRi.firstVelourLossPct ||
+        oldRi.secondVelourLossPct !== newRi.secondVelourLossPct ||
+        oldRi.weightLossPct !== newRi.weightLossPct ||
+        oldRi.washingLossPct !== newRi.washingLossPct ||
+        oldRi.yarnDyeingProcessLossPct !== newRi.yarnDyeingProcessLossPct ||
+        oldRi.rejectionPct !== newRi.rejectionPct ||
+        oldRi.secondRejectionPct !== newRi.secondRejectionPct
+      );
+  }
+}
+// Merges a set of accepted component keys into a new ResolvedCostInputs: accepted keys take
+// the fresh value, everything else stays at the old (stored) value - this is "apply just
+// these components," the core of the apply-revised-costs route.
+export function mergeResolvedInputs(oldRi: ResolvedCostInputs, newRi: ResolvedCostInputs, acceptedKeys: Set<string>): ResolvedCostInputs {
+  const merged: ResolvedCostInputs = { ...oldRi };
+  if (acceptedKeys.has('yarn')) merged.yarnComponents = newRi.yarnComponents;
+  if (acceptedKeys.has('weaving')) merged.weavingSizingCostPerKg = newRi.weavingSizingCostPerKg;
+  if (acceptedKeys.has('firstVelour')) merged.firstVelourCharges = newRi.firstVelourCharges;
+  if (acceptedKeys.has('secondVelour')) merged.secondVelourCharges = newRi.secondVelourCharges;
+  if (acceptedKeys.has('transport')) merged.transportLocalPerKg = newRi.transportLocalPerKg;
+  if (acceptedKeys.has('processing')) {
+    merged.processingChargeRatePerKg = newRi.processingChargeRatePerKg;
+    merged.washingCostPerKg = newRi.washingCostPerKg;
+  }
+  if (acceptedKeys.has('freight')) merged.freightExportPerKg = newRi.freightExportPerKg;
+  if (acceptedKeys.has('accessories')) merged.accessories = newRi.accessories;
+  if (acceptedKeys.has('exchangeRates')) merged.exchangeRates = newRi.exchangeRates;
+  if (acceptedKeys.has('yieldRejection')) {
+    merged.weavingWastagePct = newRi.weavingWastagePct;
+    merged.firstVelourLossPct = newRi.firstVelourLossPct;
+    merged.secondVelourLossPct = newRi.secondVelourLossPct;
+    merged.weightLossPct = newRi.weightLossPct;
+    merged.washingLossPct = newRi.washingLossPct;
+    merged.yarnDyeingProcessLossPct = newRi.yarnDyeingProcessLossPct;
+    merged.rejectionPct = newRi.rejectionPct;
+    merged.secondRejectionPct = newRi.secondRejectionPct;
+  }
+  return merged;
 }

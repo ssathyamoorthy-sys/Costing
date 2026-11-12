@@ -4,7 +4,19 @@ import ExcelJS from 'exceljs';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { computeSet, type SegmentInput } from '../costing/computeSet';
+import {
+  computeSet,
+  buildComputedItemFromResolvedInputs,
+  COST_COMPONENT_KEYS,
+  COMPONENT_LABELS,
+  COMPONENT_UNITS,
+  componentValue,
+  componentChanged,
+  mergeResolvedInputs,
+  type SegmentInput,
+  type ItemInput,
+  type ResolvedCostInputs,
+} from '../costing/computeSet';
 import { computeFreightAllocation } from '../costing/freightAllocation';
 import { resolveCurrentRate } from '../lib/rates';
 import { notifyRole, notifyUser } from '../lib/notify';
@@ -31,16 +43,34 @@ function sanitizeItemBreakup(costBreakupJson: string | null, role: string): stri
   const full: CostingBreakup = JSON.parse(costBreakupJson);
   return JSON.stringify({ ratePerKg: full.ratePerKg, ratePerPiece: full.ratePerPiece });
 }
-function sanitizeLineForRole<T extends { segments: { items: { costBreakupJson: string | null }[] }[] }>(line: T, role: string): T {
+// costInputsJson (resolved raw material/processing/FX rates an item was priced against - see
+// computeSet.ts's ResolvedCostInputs) is strictly for the cost-revision-drift feature, itself
+// restricted to SUPERVISOR/ADMIN/FINANCE_MANAGER (see .../cost-check below) - never sent to
+// any other role at all, same allow-list as the breakup above.
+function sanitizeItemInputs(costInputsJson: string | null, role: string): string | null {
+  if (role === 'SUPERVISOR' || role === 'ADMIN' || role === 'FINANCE_MANAGER') return costInputsJson;
+  return null;
+}
+function sanitizeLineForRole<T extends { segments: { items: { costBreakupJson: string | null; costInputsJson?: string | null }[] }[] }>(
+  line: T,
+  role: string,
+): T {
   return {
     ...line,
     segments: line.segments.map((seg) => ({
       ...seg,
-      items: seg.items.map((item) => ({ ...item, costBreakupJson: sanitizeItemBreakup(item.costBreakupJson, role) })),
+      items: seg.items.map((item) => ({
+        ...item,
+        costBreakupJson: sanitizeItemBreakup(item.costBreakupJson, role),
+        ...('costInputsJson' in item ? { costInputsJson: sanitizeItemInputs(item.costInputsJson ?? null, role) } : {}),
+      })),
     })),
   };
 }
-function sanitizeLinesForRole<T extends { segments: { items: { costBreakupJson: string | null }[] }[] }>(lines: T[], role: string): T[] {
+function sanitizeLinesForRole<T extends { segments: { items: { costBreakupJson: string | null; costInputsJson?: string | null }[] }[] }>(
+  lines: T[],
+  role: string,
+): T[] {
   return lines.map((l) => sanitizeLineForRole(l, role));
 }
 
@@ -56,12 +86,13 @@ function pileYarnDescription(seg: { yarnComponents: { slot: string; mixingPct: n
   return pile.rawMaterial.description || pile.rawMaterial.code;
 }
 
-// Recomputes every item in a quote line (Set) off current rates/overrides and writes the
-// fresh cost breakup back to the DB. Shared by anything that changes a pricing input for
-// an existing line: material overrides, and quote-level margin/commission/interest overrides.
-async function recomputeLine(quoteLineId: number) {
+// Fetches a quote line's segments/items and recomputes them off CURRENT rates/overrides -
+// without writing anything back. Shared by recomputeLine() below (which persists the result)
+// and the cost-revision-drift check (which only needs to read it, to diff against what's
+// stored).
+async function computeLineLive(quoteLineId: number) {
   const line = await prisma.quoteLine.findUnique({ where: { id: quoteLineId } });
-  if (!line) return;
+  if (!line) return null;
 
   const allSegments = await prisma.quoteLineSegment.findMany({
     where: { quoteLineId },
@@ -94,6 +125,17 @@ async function recomputeLine(quoteLineId: number) {
     })),
   });
 
+  return { line, allSegments, result };
+}
+
+// Recomputes every item in a quote line (Set) off current rates/overrides and writes the
+// fresh cost breakup back to the DB. Shared by anything that changes a pricing input for
+// an existing line: material overrides, and quote-level margin/commission/interest overrides.
+async function recomputeLine(quoteLineId: number) {
+  const live = await computeLineLive(quoteLineId);
+  if (!live) return;
+  const { allSegments, result } = live;
+
   for (let si = 0; si < allSegments.length; si++) {
     for (let ii = 0; ii < allSegments[si].items.length; ii++) {
       const computedItem = result.segments[si].items[ii];
@@ -103,6 +145,7 @@ async function recomputeLine(quoteLineId: number) {
           pieceWeightGrams: computedItem.pieceWeightGrams,
           qtyKg: computedItem.qtyKg,
           costBreakupJson: JSON.stringify(computedItem.breakup),
+          costInputsJson: JSON.stringify(computedItem.resolvedInputs),
         },
       });
     }
@@ -230,6 +273,218 @@ quotesRouter.get('/:id', async (req, res) => {
   if (visErr) return res.status(visErr.status).json({ error: visErr.error });
   // Same reasoning as the list endpoint above - metadata only, never the blob itself.
   res.json({ ...quote, purchaseOrderData: undefined, lines: sanitizeLinesForRole(quote.lines, req.user!.role) });
+});
+
+// --- Cost-revision drift: diff each line's resolved master-data inputs (yarn rate, weaving
+// cost, processing charge, FX rate, etc.) against what's stored, and let the accepted ones be
+// selectively re-priced. Strictly Supervisor/Admin/Finance-Manager-only - same allow-list as
+// sanitizeItemBreakup/sanitizeItemInputs above - any other role gets an inert empty response,
+// mirroring how the item breakup itself is already hidden from them.
+const COST_CHECK_ALLOWED_ROLES = ['SUPERVISOR', 'ADMIN', 'FINANCE_MANAGER'];
+const COST_CHECK_EXCLUDED_STATUSES = ['REJECTED', 'LOST_PRICE', 'LOST_MOQ', 'LOST_LEAD_TIME'];
+const EMPTY_COST_CHECK = { hasChanged: false, currency: '', oldTotal: 0, newTotal: 0, deltaAbs: 0, deltaPct: 0, lines: [] as unknown[] };
+
+quotesRouter.get('/:id/cost-check', async (req, res) => {
+  if (!COST_CHECK_ALLOWED_ROLES.includes(req.user!.role)) {
+    return res.json(EMPTY_COST_CHECK);
+  }
+
+  const quoteId = Number(req.params.id);
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId }, include: { lines: true } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+
+  if (quote.locked || COST_CHECK_EXCLUDED_STATUSES.includes(quote.status)) {
+    return res.json({ ...EMPTY_COST_CHECK, currency: quote.currency });
+  }
+
+  const currency = quote.currency;
+  let oldTotal = 0;
+  let newTotal = 0;
+  const lineResults: {
+    lineId: number;
+    color: string;
+    oldRate: number;
+    newRate: number;
+    segments: { segmentId: number; productCode: string; components: { key: string; label: string; unit: string; oldValue: number; newValue: number }[] }[];
+  }[] = [];
+
+  for (const line of quote.lines) {
+    const live = await computeLineLive(line.id);
+    if (!live) continue;
+    const { allSegments, result } = live;
+
+    const storedRate = line.costBreakupJson ? (JSON.parse(line.costBreakupJson).ratePerSet?.[currency] ?? 0) : 0;
+    const liveRate = result.ratePerSet[currency] ?? 0;
+    oldTotal += storedRate * line.qtySets;
+    newTotal += liveRate * line.qtySets;
+
+    const productIds = [...new Set(allSegments.map((s) => s.productId))];
+    const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
+    const productById = new Map(products.map((p) => [p.id, p]));
+
+    const segmentResults: typeof lineResults[number]['segments'] = [];
+    for (let si = 0; si < allSegments.length; si++) {
+      const dbSegment = allSegments[si];
+      const freshItems = result.segments[si].items;
+      // Segment/quote-level fields are identical across every item in a segment, so the first
+      // item with a stored snapshot stands in as representative for the whole segment.
+      const representativeIdx = dbSegment.items.findIndex((it) => it.costInputsJson);
+      if (representativeIdx === -1) continue; // nothing stored yet to diff against
+      const oldRi: ResolvedCostInputs = JSON.parse(dbSegment.items[representativeIdx].costInputsJson!);
+      const newRi = freshItems[representativeIdx].resolvedInputs;
+
+      const components = COST_COMPONENT_KEYS.filter((k) => componentChanged(k, oldRi, newRi)).map((k) => ({
+        key: k,
+        label: COMPONENT_LABELS[k],
+        unit: COMPONENT_UNITS[k],
+        oldValue: componentValue(k, oldRi, currency),
+        newValue: componentValue(k, newRi, currency),
+      }));
+      if (components.length === 0) continue;
+
+      const product = productById.get(dbSegment.productId);
+      segmentResults.push({ segmentId: dbSegment.id, productCode: product?.code ?? `#${dbSegment.productId}`, components });
+    }
+
+    if (segmentResults.length > 0) {
+      lineResults.push({ lineId: line.id, color: line.color, oldRate: storedRate, newRate: liveRate, segments: segmentResults });
+    }
+  }
+
+  const deltaAbs = newTotal - oldTotal;
+  const deltaPct = oldTotal ? (deltaAbs / oldTotal) * 100 : 0;
+  const hasChanged = lineResults.length > 0 && (oldTotal === 0 ? newTotal > 0.005 : Math.abs(deltaPct) >= 0.1);
+
+  res.json({ hasChanged, currency, oldTotal, newTotal, deltaAbs, deltaPct, lines: lineResults });
+});
+
+const applyRevisedCostsSchema = z.object({
+  accepted: z.array(z.object({ segmentId: z.number().int().positive(), keys: z.array(z.string()) })),
+});
+
+quotesRouter.post('/:id/apply-revised-costs', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
+  if (!COST_CHECK_ALLOWED_ROLES.includes(req.user!.role)) {
+    return res.status(403).json({ error: 'Not visible to this role' });
+  }
+
+  const quoteId = Number(req.params.id);
+  const isSupervisor = req.user!.role === 'SUPERVISOR' || req.user!.role === 'ADMIN';
+  const check = await assertEditableByOwner(quoteId, req.user!.userId, isSupervisor);
+  if (!check.ok) return res.status(check.status).json({ error: check.error });
+
+  const lockCheck = await assertNotLocked(quoteId, req.user!.role);
+  if (!lockCheck.ok) return res.status(lockCheck.status).json({ error: lockCheck.error });
+
+  const parsed = applyRevisedCostsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const acceptedBySegment = new Map(parsed.data.accepted.map((a) => [a.segmentId, new Set(a.keys)]));
+  if (acceptedBySegment.size === 0) return res.json({ warnings: [] });
+
+  const quote = await prisma.quote.findUnique({ where: { id: quoteId }, include: { customer: true } });
+  if (!quote) return res.status(404).json({ error: 'Not found' });
+  const commissionPct = quote.commissionPctOverride ?? quote.customer.commissionPct;
+  const wcInterestPct = quote.wcInterestPctOverride ?? quote.customer.wcInterestPct;
+  const lcInterestPct = quote.lcInterestPctOverride ?? quote.customer.lcInterestPct;
+
+  await snapshotIfNeeded(quoteId, req.user!.userId);
+
+  const lines = await prisma.quoteLine.findMany({ where: { quoteId } });
+
+  for (const line of lines) {
+    const live = await computeLineLive(line.id);
+    if (!live) continue;
+    const { allSegments, result } = live;
+    const marginPct = line.marginPctOverride ?? quote.marginPctOverride ?? quote.customer.marginPct;
+
+    let anyTouched = false;
+    const finalBreakups: CostingBreakup[][] = [];
+
+    for (let si = 0; si < allSegments.length; si++) {
+      const dbSegment = allSegments[si];
+      const acceptedKeys = acceptedBySegment.get(dbSegment.id);
+      const segmentBreakups: CostingBreakup[] = [];
+
+      let isYarnDyed = false;
+      if (acceptedKeys && acceptedKeys.size > 0) {
+        const product = await prisma.product.findUnique({ where: { id: dbSegment.productId } });
+        isYarnDyed = product?.colorMethod === 'YARN_DYED';
+      }
+
+      for (let ii = 0; ii < dbSegment.items.length; ii++) {
+        const dbItem = dbSegment.items[ii];
+
+        if (!acceptedKeys || acceptedKeys.size === 0 || !dbItem.costInputsJson) {
+          segmentBreakups.push(dbItem.costBreakupJson ? JSON.parse(dbItem.costBreakupJson) : result.segments[si].items[ii].breakup);
+          continue;
+        }
+
+        const oldRi: ResolvedCostInputs = JSON.parse(dbItem.costInputsJson);
+        const newRi = result.segments[si].items[ii].resolvedInputs;
+        const mergedRi = mergeResolvedInputs(oldRi, newRi, acceptedKeys);
+
+        const itemInput: ItemInput = {
+          itemTypeId: dbItem.itemTypeId,
+          lengthCm: dbItem.lengthCm,
+          widthCm: dbItem.widthCm,
+          fabricConsumptionSqm: dbItem.fabricConsumptionSqm,
+          gsm: dbItem.gsm,
+          qtyPerSet: dbItem.qtyPerSet,
+          hsnCodeId: dbItem.hsnCodeId,
+          accessoryOverrides: dbItem.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })),
+          packagingCharges: dbItem.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })),
+          stitchingCostPerKgOverride: dbItem.stitchingCostPerKgOverride,
+          stitchingCostPerPieceOverride: dbItem.stitchingCostPerPieceOverride,
+          packingCostPerKgOverride: dbItem.packingCostPerKgOverride,
+        };
+
+        const computedItem = await buildComputedItemFromResolvedInputs({
+          itemInput,
+          isYarnDyed,
+          resolvedInputs: mergedRi,
+          marginPct,
+          commissionPct,
+          wcInterestPct,
+          lcInterestPct,
+        });
+
+        await prisma.quoteLineSegmentItem.update({
+          where: { id: dbItem.id },
+          data: {
+            pieceWeightGrams: computedItem.pieceWeightGrams,
+            qtyKg: computedItem.qtyKg,
+            costBreakupJson: JSON.stringify(computedItem.breakup),
+            costInputsJson: JSON.stringify(computedItem.resolvedInputs),
+          },
+        });
+
+        segmentBreakups.push(computedItem.breakup);
+        anyTouched = true;
+      }
+      finalBreakups.push(segmentBreakups);
+    }
+
+    if (!anyTouched) continue;
+
+    const newLineRatePerSet: Record<string, number> = {};
+    for (const currency of Object.keys(result.ratePerSet)) {
+      let total = 0;
+      for (let si = 0; si < finalBreakups.length; si++) {
+        for (let ii = 0; ii < finalBreakups[si].length; ii++) {
+          const qtyPerSet = allSegments[si].items[ii].qtyPerSet;
+          total += (finalBreakups[si][ii].ratePerPiece[currency] ?? 0) * qtyPerSet;
+        }
+      }
+      newLineRatePerSet[currency] = total;
+    }
+
+    await prisma.quoteLine.update({
+      where: { id: line.id },
+      data: { costBreakupJson: JSON.stringify({ ratePerSet: newLineRatePerSet }) },
+    });
+  }
+
+  res.json({ warnings: [] });
 });
 
 quotesRouter.get('/:id/xlsx', async (req, res) => {
@@ -900,6 +1155,7 @@ function buildSegmentsCreateInput(segments: Awaited<ReturnType<typeof computeSet
         pieceWeightGrams: item.pieceWeightGrams,
         qtyKg: item.qtyKg,
         costBreakupJson: JSON.stringify(item.breakup),
+        costInputsJson: JSON.stringify(item.resolvedInputs),
         accessoryOverrides: item.accessoryOverrides?.length ? { create: item.accessoryOverrides } : undefined,
         packagingCharges: item.packagingCharges?.length ? { create: item.packagingCharges } : undefined,
       })),

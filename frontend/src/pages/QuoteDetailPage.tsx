@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, openBinary, uploadFile } from '../api';
 import type {
   AiMatchRef,
+  CostCheckResult,
   CostingBreakup,
   ExtractionResult,
   HsnCode,
@@ -237,6 +238,11 @@ export function QuoteDetailPage() {
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [promptDialog, setPromptDialog] = useState<PromptDialogState | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [costDrift, setCostDrift] = useState<CostCheckResult | null>(null);
+  const [costDriftDismissed, setCostDriftDismissed] = useState(false);
+  const [costDriftExpanded, setCostDriftExpanded] = useState(false);
+  const [acceptedComponents, setAcceptedComponents] = useState<Record<number, Set<string>>>({});
+  const [applyingRevisedCosts, setApplyingRevisedCosts] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [uploadingPO, setUploadingPO] = useState(false);
@@ -294,8 +300,61 @@ export function QuoteDetailPage() {
       .get<QuoteRevision[]>(`/quotes/${id}/revisions`)
       .then(setRevisions)
       .catch(() => {});
+    // Cost-revision drift: Supervisor/Admin/Finance-Manager-only, same as the itemized cost
+    // breakup itself - the backend is an inert no-op for any other role, but there's no point
+    // even issuing the request for one. Re-fetched every time load() runs (mount, and after
+    // any mutation that already calls load()), so the banner clears itself once stored costs
+    // catch up with live ones - including right after "Apply selected" below.
+    if (user?.role === 'SUPERVISOR' || user?.role === 'ADMIN' || user?.role === 'FINANCE_MANAGER') {
+      api
+        .get<CostCheckResult>(`/quotes/${id}/cost-check`)
+        .then(setCostDrift)
+        .catch(() => {});
+    }
   }
   useEffect(load, [id]);
+  // Dismissing the banner is per-quote, for the current viewing session only - reset it when
+  // navigating to a different quote (QuoteDetailPage doesn't remount on an id route-param
+  // change, so without this a dismissal would wrongly carry over to the next quote viewed).
+  useEffect(() => {
+    setCostDriftDismissed(false);
+    setCostDriftExpanded(false);
+    setAcceptedComponents({});
+  }, [id]);
+
+  function toggleCostDriftComponent(segmentId: number, key: string, allKeysForSegment: string[]) {
+    setAcceptedComponents((prev) => {
+      const current = prev[segmentId] ?? new Set(allKeysForSegment);
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return { ...prev, [segmentId]: next };
+    });
+  }
+
+  async function applyRevisedCosts() {
+    if (!quote || !costDrift) return;
+    setApplyingRevisedCosts(true);
+    setError(null);
+    try {
+      const accepted = costDrift.lines
+        .flatMap((line) =>
+          line.segments.map((seg) => {
+            const checked = acceptedComponents[seg.segmentId] ?? new Set(seg.components.map((c) => c.key));
+            return { segmentId: seg.segmentId, keys: [...checked] };
+          }),
+        )
+        .filter((a) => a.keys.length > 0);
+      await api.post(`/quotes/${quote.id}/apply-revised-costs`, { accepted });
+      setCostDriftExpanded(false);
+      setAcceptedComponents({});
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setApplyingRevisedCosts(false);
+    }
+  }
   // The error banner renders once, near the top of the page - but most of the buttons that can
   // fail (Match target price, margin overrides, etc.) live inside a Set card far down a long
   // quote. Without this, a failed action looks like it silently did nothing: the error was set,
@@ -1265,6 +1324,76 @@ export function QuoteDetailPage() {
 
       {error && <Alert type="error">{error}</Alert>}
       {importMessage && <Alert type="success">{importMessage}</Alert>}
+      {costDrift?.hasChanged && !costDriftDismissed && (
+        <Alert type="warning">
+          <div>
+            Costs have changed since this quote was priced: {symbol}
+            {costDrift.oldTotal.toFixed(2)} &rarr; {symbol}
+            {costDrift.newTotal.toFixed(2)} ({costDrift.deltaPct >= 0 ? '+' : ''}
+            {costDrift.deltaPct.toFixed(1)}%).
+            <button className="btn small" style={{ marginLeft: 8 }} onClick={() => setCostDriftExpanded((v) => !v)}>
+              {costDriftExpanded ? 'Hide details' : 'Review changes'}
+            </button>
+            {canEditLines && (
+              <button className="btn small primary" style={{ marginLeft: 8 }} disabled={applyingRevisedCosts} onClick={applyRevisedCosts}>
+                {applyingRevisedCosts ? 'Applying...' : 'Apply selected'}
+              </button>
+            )}
+            <button className="btn small" style={{ marginLeft: 8 }} onClick={() => setCostDriftDismissed(true)}>
+              Dismiss
+            </button>
+          </div>
+          {costDriftExpanded && (
+            <div style={{ marginTop: 10 }}>
+              {costDrift.lines.map((line) => (
+                <div key={line.lineId} style={{ marginBottom: 10 }}>
+                  <strong>{line.color}</strong>: {symbol}
+                  {line.oldRate.toFixed(2)} &rarr; {symbol}
+                  {line.newRate.toFixed(2)} / set
+                  {line.segments.map((seg) => {
+                    const allKeys = seg.components.map((c) => c.key);
+                    const checked = acceptedComponents[seg.segmentId] ?? new Set(allKeys);
+                    return (
+                      <table key={seg.segmentId} style={{ marginTop: 4, marginBottom: 8, fontSize: 13 }}>
+                        <thead>
+                          <tr>
+                            <th></th>
+                            <th>{seg.productCode}</th>
+                            <th className="right">Old</th>
+                            <th className="right">New</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {seg.components.map((comp) => (
+                            <tr key={comp.key}>
+                              <td>
+                                {canEditLines && (
+                                  <input
+                                    type="checkbox"
+                                    checked={checked.has(comp.key)}
+                                    onChange={() => toggleCostDriftComponent(seg.segmentId, comp.key, allKeys)}
+                                  />
+                                )}
+                              </td>
+                              <td>{comp.label}</td>
+                              <td className="mono muted right">
+                                {comp.oldValue.toFixed(2)} {comp.unit}
+                              </td>
+                              <td className="mono right">
+                                {comp.newValue.toFixed(2)} {comp.unit}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+        </Alert>
+      )}
       {warnings.map((w, i) => (
         <Alert key={i} type="warning">
           {w}

@@ -262,6 +262,37 @@ export interface QuoteLineSegment {
   materialOverrides?: { id: number; rawMaterialId: number; rawMaterial: RawMaterial; overridePricePerKg: number; reason?: string | null }[];
 }
 
+// Cost-revision drift (see GET/POST /quotes/:id/cost-check, /apply-revised-costs) -
+// Supervisor/Admin/Finance Manager only, same as the itemized cost breakup itself.
+export interface CostCheckComponent {
+  key: string;
+  label: string;
+  unit: string;
+  oldValue: number;
+  newValue: number;
+}
+export interface CostCheckSegment {
+  segmentId: number;
+  productCode: string;
+  components: CostCheckComponent[];
+}
+export interface CostCheckLine {
+  lineId: number;
+  color: string;
+  oldRate: number;
+  newRate: number;
+  segments: CostCheckSegment[];
+}
+export interface CostCheckResult {
+  hasChanged: boolean;
+  currency: Currency | '';
+  oldTotal: number;
+  newTotal: number;
+  deltaAbs: number;
+  deltaPct: number;
+  lines: CostCheckLine[];
+}
+
 export interface QuoteLine {
   id: number;
   quoteId: number;
