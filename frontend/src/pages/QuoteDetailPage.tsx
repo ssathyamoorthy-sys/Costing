@@ -1272,35 +1272,33 @@ export function QuoteDetailPage() {
       ))}
       {quote.remarks && <Alert type={quote.status === 'REJECTED' ? 'error' : 'success'}>Remarks: {quote.remarks}</Alert>}
 
-      {(quote.status === 'SENT' || quote.status === 'CONVERTED_TO_ORDER' || quote.locked) && (
-        <div className="panel" style={{ marginBottom: 14 }}>
-          <h4 style={{ margin: '0 0 8px' }}>Purchase Order</h4>
-          {quote.purchaseOrderFileName ? (
-            <p style={{ margin: 0 }}>
-              <button className="btn small" onClick={() => openBinary(`/quotes/${quote.id}/purchase-order`, quote.purchaseOrderFileName!)}>
-                Download {quote.purchaseOrderFileName}
-              </button>
-              <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
-                Uploaded by {quote.purchaseOrderUploadedBy?.name}
-                {quote.purchaseOrderUploadedAt && ` on ${new Date(quote.purchaseOrderUploadedAt).toLocaleDateString()}`}
-              </span>
-            </p>
-          ) : (
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-              No Purchase Order on file yet - required before Lock &amp; Finalize can generate the CVN.
-            </p>
-          )}
-          {!quote.locked && ((isOwner && isMerchandiser) || isSupervisor) && (
-            <label
-              className={`btn small${uploadingPO ? ' disabled' : ''}`}
-              style={{ marginTop: 8, cursor: uploadingPO ? 'default' : 'pointer', display: 'inline-block' }}
-            >
-              {uploadingPO ? 'Uploading...' : quote.purchaseOrderFileName ? 'Replace Purchase Order' : 'Upload Purchase Order'}
-              <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={handlePurchaseOrderUpload} disabled={uploadingPO} style={{ display: 'none' }} />
-            </label>
-          )}
-        </div>
-      )}
+      <div className="panel" style={{ marginBottom: 14 }}>
+        <h4 style={{ margin: '0 0 8px' }}>Purchase Order</h4>
+        {quote.purchaseOrderFileName ? (
+          <p style={{ margin: 0 }}>
+            <button className="btn small" onClick={() => openBinary(`/quotes/${quote.id}/purchase-order`, quote.purchaseOrderFileName!)}>
+              Download {quote.purchaseOrderFileName}
+            </button>
+            <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+              Uploaded by {quote.purchaseOrderUploadedBy?.name}
+              {quote.purchaseOrderUploadedAt && ` on ${new Date(quote.purchaseOrderUploadedAt).toLocaleDateString()}`}
+            </span>
+          </p>
+        ) : (
+          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+            No Purchase Order on file yet - required before Lock &amp; Finalize can generate the CVN.
+          </p>
+        )}
+        {!quote.locked && ((isOwner && isMerchandiser) || isSupervisor) && (
+          <label
+            className={`btn small${uploadingPO ? ' disabled' : ''}`}
+            style={{ marginTop: 8, cursor: uploadingPO ? 'default' : 'pointer', display: 'inline-block' }}
+          >
+            {uploadingPO ? 'Uploading...' : quote.purchaseOrderFileName ? 'Replace Purchase Order' : 'Upload Purchase Order'}
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={handlePurchaseOrderUpload} disabled={uploadingPO} style={{ display: 'none' }} />
+          </label>
+        )}
+      </div>
 
       {quote.locked && (
         <div className="panel" style={{ background: 'var(--blue-light)', borderColor: 'var(--blue)' }}>

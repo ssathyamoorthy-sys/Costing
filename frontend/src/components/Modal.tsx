@@ -5,6 +5,12 @@ const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disab
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
+  // Call sites pass an inline arrow function for onClose, so its identity changes on every
+  // parent render (e.g. every keystroke in a sibling field). Keeping it in a ref read by the
+  // handler below lets the setup effect run once per modal instance (mount only) instead of
+  // re-running - and re-stealing focus - on every unrelated re-render.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     // Focus something inside the dialog as soon as it opens, so keyboard/screen-reader
@@ -17,7 +23,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab' || !dialog) return;
@@ -40,7 +46,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
       document.removeEventListener('keydown', onKeyDown);
       previouslyFocused?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
