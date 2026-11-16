@@ -4,6 +4,7 @@ import type { Customer, QuoteTemplate, QuoteTemplateGroup, QuoteTemplateGroupSum
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
 import { Modal } from '../components/Modal';
+import { SearchableSelect } from '../components/SearchableSelect';
 import { SortableTh } from '../components/SortableTh';
 import { useSortableTable } from '../hooks/useSortableTable';
 
@@ -178,14 +179,7 @@ export function TemplatesPage() {
       <div className="panel">
         <div className="field" style={{ maxWidth: 360 }}>
           <label>Customer</label>
-          <select value={customerId} onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : '')}>
-            <option value="">Select...</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect<number> value={customerId} onChange={setCustomerId} options={customers.map((c) => ({ value: c.id, label: c.name }))} />
         </div>
       </div>
 

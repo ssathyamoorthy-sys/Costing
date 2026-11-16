@@ -426,13 +426,11 @@ export function ProductEditPage() {
             {accessoryRows.map((row, i) => (
               <tr key={i}>
                 <td>
-                  <select value={row.accessoryTypeId} onChange={(e) => updateAccessoryRow(i, { accessoryTypeId: Number(e.target.value) })}>
-                    {accessoryTypes.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
+                  <SearchableSelect<number>
+                    value={row.accessoryTypeId}
+                    onChange={(v) => v !== '' && updateAccessoryRow(i, { accessoryTypeId: v })}
+                    options={accessoryTypes.map((a) => ({ value: a.id, label: a.name }))}
+                  />
                 </td>
                 <td className="right">
                   <input type="number" step="0.1" value={row.costPerPiece} onChange={(e) => updateAccessoryRow(i, { costPerPiece: Number(e.target.value) })} style={{ width: 80, textAlign: 'right' }} />

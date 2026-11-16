@@ -2244,18 +2244,16 @@ export function QuoteDetailPage() {
             ✨ AI-fill new set
           </button>
           {templateGroups.length > 0 && (
-            <select
-              value={selectedGroupId}
+            <SearchableSelect<number>
+              value={selectedGroupId === '' ? '' : Number(selectedGroupId)}
               disabled={applyingGroup}
-              onChange={(e) => e.target.value && applyTemplateGroup(Number(e.target.value))}
-            >
-              <option value="">{applyingGroup ? 'Applying recipe...' : 'Apply saved recipe (whole quote)...'}</option>
-              {templateGroups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name} ({g.setCount} set{g.setCount === 1 ? '' : 's'})
-                </option>
-              ))}
-            </select>
+              onChange={(v) => {
+                if (v !== '') applyTemplateGroup(v);
+              }}
+              options={templateGroups.map((g) => ({ value: g.id, label: `${g.name} (${g.setCount} set${g.setCount === 1 ? '' : 's'})` }))}
+              placeholder={applyingGroup ? 'Applying recipe...' : 'Apply saved recipe (whole quote)...'}
+              style={{ minWidth: 260 }}
+            />
           )}
         </div>
       )}
@@ -2281,14 +2279,12 @@ export function QuoteDetailPage() {
           {!editingLineId && templates.length > 0 && (
             <div className="field" style={{ maxWidth: 360, marginBottom: 12 }}>
               <label>Load from template (this customer's saved recipes)</label>
-              <select value={selectedTemplateId} onChange={(e) => (e.target.value ? loadTemplate(Number(e.target.value)) : setSelectedTemplateId(''))}>
-                <option value="">Start from scratch...</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect<number>
+                value={selectedTemplateId === '' ? '' : Number(selectedTemplateId)}
+                onChange={(v) => (v !== '' ? loadTemplate(v) : setSelectedTemplateId(''))}
+                options={templates.map((t) => ({ value: t.id, label: t.name }))}
+                placeholder="Start from scratch..."
+              />
             </div>
           )}
 
@@ -2514,14 +2510,11 @@ export function QuoteDetailPage() {
                     <div className="form-grid">
                       <div className="field">
                         <label>Item Type</label>
-                        <select value={item.itemTypeId} onChange={(e) => updateItem(segIdx, itemIdx, { itemTypeId: Number(e.target.value) })}>
-                          <option value="">Select...</option>
-                          {itemTypes.map((it) => (
-                            <option key={it.id} value={it.id}>
-                              {it.name}
-                            </option>
-                          ))}
-                        </select>
+                        <SearchableSelect<number>
+                          value={item.itemTypeId}
+                          onChange={(v) => updateItem(segIdx, itemIdx, { itemTypeId: v })}
+                          options={itemTypes.map((it) => ({ value: it.id, label: it.name }))}
+                        />
                         {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.itemType) && (
                           <span className="muted" style={{ fontSize: 12 }}>
                             {aiHint(aiHints?.segments[segIdx]?.items[itemIdx]?.itemType)}

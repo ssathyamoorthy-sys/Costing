@@ -3,6 +3,7 @@ import { api } from '../api';
 import type { Customer, Product, RawMaterial } from '../types';
 import { useAuth } from '../AuthContext';
 import { Alert } from '../components/Alert';
+import { SearchableSelect } from '../components/SearchableSelect';
 import { SortableTh } from '../components/SortableTh';
 import { useSortableTable } from '../hooks/useSortableTable';
 import { exportRowsToCsv } from '../lib/exportCsv';
@@ -941,14 +942,12 @@ function RawMaterialHistoryReport() {
     <div>
       <div className="field" style={{ maxWidth: 260, marginBottom: 12 }}>
         <label>Material</label>
-        <select value={materialId} onChange={(e) => setMaterialId(e.target.value)}>
-          <option value="">All materials</option>
-          {materials.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.code}
-            </option>
-          ))}
-        </select>
+        <SearchableSelect<number>
+          value={materialId === '' ? '' : Number(materialId)}
+          onChange={(v) => setMaterialId(v === '' ? '' : String(v))}
+          options={materials.map((m) => ({ value: m.id, label: m.code }))}
+          placeholder="All materials"
+        />
       </div>
       {loading ? (
         <p className="muted">Loading...</p>
@@ -1166,15 +1165,12 @@ function PricingHistoryReport() {
     <div>
       <div className="field" style={{ maxWidth: 300, marginBottom: 12 }}>
         <label>Product</label>
-        <select value={productId} onChange={(e) => setProductId(e.target.value)}>
-          <option value="">Select a product...</option>
-          {products.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.code}
-              {p.name ? ` - ${p.name}` : ''}
-            </option>
-          ))}
-        </select>
+        <SearchableSelect<number>
+          value={productId === '' ? '' : Number(productId)}
+          onChange={(v) => setProductId(v === '' ? '' : String(v))}
+          options={products.map((p) => ({ value: p.id, label: p.code, sublabel: p.name ?? undefined }))}
+          placeholder="Select a product..."
+        />
       </div>
       {productId && (
         <div>
@@ -1303,14 +1299,12 @@ function CurrentPricingByCustomerReport() {
     <div>
       <div className="field" style={{ maxWidth: 260, marginBottom: 12 }}>
         <label>Customer</label>
-        <select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-          <option value="">All customers</option>
-          {customers.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+        <SearchableSelect<number>
+          value={customerId === '' ? '' : Number(customerId)}
+          onChange={(v) => setCustomerId(v === '' ? '' : String(v))}
+          options={customers.map((c) => ({ value: c.id, label: c.name }))}
+          placeholder="All customers"
+        />
       </div>
       {loading ? (
         <p className="muted">Loading...</p>
