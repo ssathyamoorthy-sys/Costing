@@ -128,6 +128,10 @@ interface FormSegment {
   productId: number | '';
   yarnComponents: FormYarnRow[];
   items: FormItem[];
+  // Set by "Duplicate (same yarn mix)" below - the yarn recipe was deliberately carried over
+  // from another segment rather than the product master's own default, so picking a Product
+  // for this segment must not silently overwrite it the way it normally would.
+  yarnLocked?: boolean;
 }
 interface SetForm {
   color: string;
@@ -688,6 +692,24 @@ export function QuoteDetailPage() {
   function removeSegment(segIdx: number) {
     setForm((f) => ({ ...f, segments: f.segments.filter((_, i) => i !== segIdx) }));
   }
+  // Inserts a copy of this segment right after it, carrying over its yarn recipe exactly
+  // (same raw materials/mixing %/dyeing cost) but with an empty product and a fresh item -
+  // for the common case of several products/sizes deliberately priced off the same shared
+  // yarn mix, so that recipe doesn't need to be re-entered slot by slot each time.
+  function duplicateSegment(segIdx: number) {
+    setForm((f) => {
+      const source = f.segments[segIdx];
+      const clone: FormSegment = {
+        productId: '',
+        yarnComponents: source.yarnComponents.map((c) => ({ ...c })),
+        items: [emptyItem()],
+        yarnLocked: true,
+      };
+      const segments = [...f.segments];
+      segments.splice(segIdx + 1, 0, clone);
+      return { ...f, segments };
+    });
+  }
   function setSegmentProduct(segIdx: number, productId: number) {
     if (productId) pushRecentProduct(productId);
     const product = products.find((p) => p.id === productId);
@@ -698,13 +720,18 @@ export function QuoteDetailPage() {
           ? {
               ...seg,
               productId,
-              yarnComponents: (product?.yarnComponents ?? []).map((c) => ({
-                slot: c.slot,
-                rawMaterialId: c.rawMaterialId,
-                mixingPct: c.mixingPct,
-                dyeingCostPerKg: c.dyeingCostPerKg ?? 0,
-                dyeVariant: c.dyeVariant ?? '',
-              })),
+              // A locked (duplicated) yarn recipe stays exactly as carried over - picking a
+              // product here only drives the product-level process parameters (weaving cost,
+              // rejection %, etc.), not the yarn mix itself.
+              yarnComponents: seg.yarnLocked
+                ? seg.yarnComponents
+                : (product?.yarnComponents ?? []).map((c) => ({
+                    slot: c.slot,
+                    rawMaterialId: c.rawMaterialId,
+                    mixingPct: c.mixingPct,
+                    dyeingCostPerKg: c.dyeingCostPerKg ?? 0,
+                    dyeVariant: c.dyeVariant ?? '',
+                  })),
             }
           : seg,
       ),
@@ -1752,6 +1779,66 @@ export function QuoteDetailPage() {
           );
         })()}
 
+      {(isSupervisor || isFinanceManager) && quote.lines.length > 0 && (
+        <div className="panel" style={{ marginBottom: 14, overflowX: 'auto' }}>
+          <h4 style={{ margin: '0 0 8px' }}>Quote summary</h4>
+          <table>
+            <thead>
+              <tr>
+                <th>Set #</th>
+                <th>Segment (Quality)</th>
+                <th>Article</th>
+                <th>Item</th>
+                <th>Size (cm)</th>
+                <th className="right">GSM</th>
+                <th className="right">Qty/Set</th>
+                <th className="right">Qty in Pcs</th>
+                <th className="right">Qty in Kg</th>
+                <th className="right">Rate/Kg ({currency})</th>
+                <th className="right">Rate/Pc ({currency})</th>
+                <th className="right">Margin %</th>
+                <th className="right">Total Margin</th>
+              </tr>
+            </thead>
+            <tbody>
+              {quote.lines.flatMap((line, lineIdx) =>
+                line.segments.flatMap((seg) =>
+                  seg.items.map((item, itemIdx) => {
+                    const b: CostingBreakup | null = item.costBreakupJson ? JSON.parse(item.costBreakupJson) : null;
+                    const qtyPcs = item.qtyPerSet * line.qtySets;
+                    const qtyKgTotal = (item.qtyKg ?? 0) * line.qtySets;
+                    const ratePerKg = b?.ratePerKg?.[currency] ?? null;
+                    const ratePerPiece = b?.ratePerPiece?.[currency] ?? null;
+                    const marginPct = b?.marginPct ?? null;
+                    const totalMargin = ratePerPiece != null && marginPct != null ? ratePerPiece * qtyPcs * marginPct : null;
+                    return (
+                      <tr key={`${line.id}-${seg.id ?? 0}-${itemIdx}`}>
+                        <td>{lineIdx + 1}</td>
+                        <td>
+                          {seg.product?.code}
+                          {seg.product?.name ? ` (${seg.product.name})` : ''}
+                        </td>
+                        <td className="muted">{line.articleRef || '-'}</td>
+                        <td>{item.itemType?.name}</td>
+                        <td className="mono">{sizeLabel(item)}</td>
+                        <td className="right mono">{item.gsm}</td>
+                        <td className="right mono">{item.qtyPerSet}</td>
+                        <td className="right mono">{qtyPcs.toLocaleString()}</td>
+                        <td className="right mono">{qtyKgTotal.toFixed(3)}</td>
+                        <td className="right mono">{ratePerKg != null ? ratePerKg.toFixed(4) : '-'}</td>
+                        <td className="right mono">{ratePerPiece != null ? `${symbol}${ratePerPiece.toFixed(2)}` : '-'}</td>
+                        <td className="right mono">{marginPct != null ? `${(marginPct * 100).toFixed(2)}%` : '-'}</td>
+                        <td className="right mono">{totalMargin != null ? `${symbol}${totalMargin.toFixed(2)}` : '-'}</td>
+                      </tr>
+                    );
+                  }),
+                ),
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {quote.lines.map((line, lineIdx) => {
         const setRollup: { ratePerSet: Record<string, number> } | null = line.costBreakupJson ? JSON.parse(line.costBreakupJson) : null;
         const ratePerSet = setRollup?.ratePerSet?.[currency];
@@ -2263,11 +2350,20 @@ export function QuoteDetailPage() {
                       mixing {segmentMixingTotal(seg).toFixed(1)}%
                     </span>
                   </h4>
-                  {form.segments.length > 1 && (
-                    <button className="btn small danger" onClick={() => removeSegment(segIdx)}>
-                      Remove segment
+                  <div className="tag-row">
+                    <button
+                      className="btn small"
+                      onClick={() => duplicateSegment(segIdx)}
+                      title="Add another product/size priced off this exact same yarn mix, without re-entering the recipe"
+                    >
+                      Duplicate (same yarn mix)
                     </button>
-                  )}
+                    {form.segments.length > 1 && (
+                      <button className="btn small danger" onClick={() => removeSegment(segIdx)}>
+                        Remove segment
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
