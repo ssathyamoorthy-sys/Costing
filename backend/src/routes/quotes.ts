@@ -512,7 +512,7 @@ quotesRouter.get('/:id/xlsx', async (req, res) => {
     { header: 'Length (cm)', key: 'length', width: 12 },
     { header: 'GSM', key: 'gsm', width: 8 },
     { header: 'Color', key: 'color', width: 14 },
-    { header: 'Article Ref', key: 'articleRef', width: 16 },
+    { header: 'Article Ref#', key: 'articleRef', width: 16 },
     { header: 'Qty/Set', key: 'qtyPerSet', width: 10 },
     { header: `Rate/Pc (${currency})`, key: 'ratePc', width: 14, numFmt: '#,##0.0000' },
     ...(freight.applies ? [{ header: `Freight/Pc (${currency})`, key: 'freightPc', width: 14, numFmt: '#,##0.0000' }] : []),

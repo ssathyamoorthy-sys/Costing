@@ -21,6 +21,7 @@ interface QuoteForPdf {
   customer: { name: string };
   lines: {
     color: string;
+    articleRef?: string | null;
     qtySets: number;
     costBreakupJson: string | null;
     segments: {
@@ -122,11 +123,12 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
   // grand-total footer row.
   const cols = [
     { key: 'item', label: 'Item', width: 55 },
-    { key: 'quality', label: 'Quality', width: freight.applies ? 60 : 75 },
-    { key: 'pileYarn', label: 'Pile Yarn', width: freight.applies ? 50 : 65 },
+    { key: 'quality', label: 'Quality', width: freight.applies ? 40 : 55 },
+    { key: 'pileYarn', label: 'Pile Yarn', width: freight.applies ? 35 : 50 },
     { key: 'size', label: 'Size (cm)', width: 45 },
     { key: 'gsm', label: 'GSM', width: 25 },
     { key: 'color', label: 'Color', width: 35 },
+    { key: 'articleRef', label: 'Article Ref#', width: 35 },
     { key: 'qty', label: 'Qty', width: 35, align: 'right' as const },
     { key: 'ratePc', label: `Rate/Pc (${currency})`, width: 55, align: 'right' as const },
     ...(freight.applies ? [{ key: 'freightPc', label: `Freight/Pc (${currency})`, width: 50, align: 'right' as const }] : []),
@@ -182,6 +184,7 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
           { text: `${item.widthCm}x${item.lengthCm}`, width: colW('size') },
           { text: String(item.gsm), width: colW('gsm') },
           { text: line.color, width: colW('color') },
+          { text: line.articleRef || '-', width: colW('articleRef') },
           { text: qty.toLocaleString(), width: colW('qty'), align: 'right' },
           { text: ratePc != null ? ratePc.toFixed(2) : '-', width: colW('ratePc'), align: 'right' },
           ...(freight.applies ? [{ text: freightPc.toFixed(2), width: colW('freightPc'), align: 'right' as const }] : []),
@@ -200,7 +203,7 @@ export function generateQuotePdf(quote: QuoteForPdf): PDFKit.PDFDocument {
     doc,
     y,
     [
-      { text: 'Grand Total', width: colW('item') + colW('quality') + colW('pileYarn') + colW('size') + colW('gsm') + colW('color') },
+      { text: 'Grand Total', width: colW('item') + colW('quality') + colW('pileYarn') + colW('size') + colW('gsm') + colW('color') + colW('articleRef') },
       { text: grandQty.toLocaleString(), width: colW('qty'), align: 'right' },
       { text: '', width: colW('ratePc'), align: 'right' },
       ...(freight.applies ? [{ text: '', width: colW('freightPc'), align: 'right' as const }] : []),

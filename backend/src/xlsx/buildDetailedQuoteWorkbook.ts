@@ -70,6 +70,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
   interface SummaryRow {
     setNo: number;
     segment: string;
+    articleRef: string;
     item: string;
     size: string;
     gsmFormula: string;
@@ -196,6 +197,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
         summaryRows.push({
           setNo: lineIdx + 1,
           segment: ctx.segmentLabel,
+          articleRef: line.articleRef || '-',
           item: item.itemType.name,
           size: isGarment ? `${item.fabricConsumptionSqm} sqm fabric` : `${item.widthCm}x${item.lengthCm}`,
           gsmFormula: gsmCell,
@@ -212,7 +214,11 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     }
   }
 
-  const lastCol = freight.applies ? 13 : 12;
+  // Article Ref# is appended as the LAST column (after Freight/Pc when it applies) rather
+  // than inserted among the existing ones, so none of the hardcoded column indices/cell
+  // letters used by the formulas and totals row below need to shift.
+  const articleRefCol = freight.applies ? 14 : 13;
+  const lastCol = articleRefCol;
   summaryWs.mergeCells(1, 1, 1, lastCol);
   const summaryTitleParts = [`Quote ${quote.quoteNo}`];
   if (quote.customerEnquiryNo) summaryTitleParts.push(`Enquiry No ${quote.customerEnquiryNo}`);
@@ -221,7 +227,6 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
   summaryWs.getCell(1, 1).value = summaryTitleParts.join(' - ');
   summaryWs.getCell(1, 1).font = { bold: true, size: 13 };
 
-  const YELLOW_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
   const headers = [
     'Set #',
     'Segment (Quality)',
@@ -236,13 +241,12 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     'Margin %',
     'Total Margin',
     ...(freight.applies ? [`Freight/Pc (${quote.currency})`] : []),
+    'Article Ref#',
   ];
-  const highlightedHeaders = new Set(['GSM', 'Qty in Pcs', 'Qty in Kg', 'Margin %', 'Total Margin']);
   headers.forEach((h, i) => {
     const cell = summaryWs.getCell(3, i + 1);
     cell.value = h;
     cell.font = { bold: true };
-    if (highlightedHeaders.has(h)) cell.fill = YELLOW_FILL;
   });
   summaryWs.columns = [
     { width: 8 },
@@ -258,6 +262,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     { width: 10 },
     { width: 16 },
     ...(freight.applies ? [{ width: 16 }] : []),
+    { width: 16 },
   ];
 
   let row = 4;
@@ -290,6 +295,7 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
       summaryWs.getCell(row, 13).value = { formula: s.freightPcFormula } as any;
       summaryWs.getCell(row, 13).numFmt = '#,##0.0000';
     }
+    summaryWs.getCell(row, articleRefCol).value = s.articleRef;
     row++;
   }
   const lastDataRow = row - 1;
@@ -312,7 +318,6 @@ export async function buildDetailedQuoteWorkbook(quoteId: number): Promise<Excel
     summaryWs.getCell(totalsRow, 11).numFmt = '0.00%';
     for (const col of [2, 7, 8, 11, 12]) {
       summaryWs.getCell(totalsRow, col).font = { bold: true };
-      summaryWs.getCell(totalsRow, col).fill = YELLOW_FILL;
     }
   }
 
