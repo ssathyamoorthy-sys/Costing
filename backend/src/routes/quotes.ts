@@ -982,6 +982,101 @@ quotesRouter.post('/', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async
   res.status(201).json(quote);
 });
 
+// Full copy of an existing quote (new quote number, DRAFT status, current user as owner) - a
+// quick way to start a repeat/variant order instead of rebuilding every Set/Segment/Item by
+// hand. Every Set/Segment/Item/yarn-recipe/accessory/packaging-charge row is copied verbatim,
+// including the stored cost breakup/resolved-inputs snapshot - so the cost-revision-drift
+// banner can immediately show whether master rates have moved since the original was priced.
+// Deliberately NOT copied, since these belong to the original negotiation instance rather than
+// to "what was quoted": lock/CVN state, approval/submit/sent timestamps, the attached Purchase
+// Order, the customer's enquiry number and validity date (a new enquiry needs its own), and any
+// one-off Supervisor material-price overrides (QuoteLineSegmentMaterialOverride - these carry
+// their own Purchase-notification workflow tied to the original negotiation).
+quotesRouter.post('/:id/duplicate', requireRole('MERCHANDISER', 'SUPERVISOR', 'ADMIN'), async (req, res) => {
+  const source = await prisma.quote.findUnique({
+    where: { id: Number(req.params.id) },
+    include: { lines: { include: lineFull } },
+  });
+  if (!source) return res.status(404).json({ error: 'Not found' });
+  const visErr = visibilityError(source, req.user!);
+  if (visErr) return res.status(visErr.status).json({ error: visErr.error });
+
+  const duplicate = await prisma.quote.create({
+    data: {
+      quoteNo: `DRAFT-${Date.now()}`,
+      customerId: source.customerId,
+      createdById: req.user!.userId,
+      currency: source.currency,
+      paymentTerms: source.paymentTerms,
+      freightTerms: source.freightTerms,
+      incoterm: source.incoterm,
+      containerCostTotal: source.containerCostTotal,
+      marginPctOverride: source.marginPctOverride,
+      commissionPctOverride: source.commissionPctOverride,
+      wcInterestPctOverride: source.wcInterestPctOverride,
+      lcInterestPctOverride: source.lcInterestPctOverride,
+      freightExportPerKgOverride: source.freightExportPerKgOverride,
+      lines: {
+        create: source.lines.map((line) => ({
+          color: line.color,
+          articleRef: line.articleRef,
+          qtySets: line.qtySets,
+          targetPrice: line.targetPrice,
+          marginPctOverride: line.marginPctOverride,
+          processingChargeRatePerKgOverride: line.processingChargeRatePerKgOverride,
+          costBreakupJson: line.costBreakupJson,
+          segments: {
+            create: line.segments.map((seg) => ({
+              productId: seg.productId,
+              sortOrder: seg.sortOrder,
+              weavingSizingCostPerKgOverride: seg.weavingSizingCostPerKgOverride,
+              firstVelourChargesOverride: seg.firstVelourChargesOverride,
+              secondVelourChargesOverride: seg.secondVelourChargesOverride,
+              transportLocalPerKgOverride: seg.transportLocalPerKgOverride,
+              washingCostPerKgOverride: seg.washingCostPerKgOverride,
+              yarnComponents: {
+                create: seg.yarnComponents.map((y) => ({
+                  slot: y.slot,
+                  rawMaterialId: y.rawMaterialId,
+                  mixingPct: y.mixingPct,
+                  dyeingCostPerKg: y.dyeingCostPerKg,
+                  dyeVariant: y.dyeVariant,
+                })),
+              },
+              items: {
+                create: seg.items.map((item) => ({
+                  itemTypeId: item.itemTypeId,
+                  lengthCm: item.lengthCm,
+                  widthCm: item.widthCm,
+                  fabricConsumptionSqm: item.fabricConsumptionSqm,
+                  gsm: item.gsm,
+                  qtyPerSet: item.qtyPerSet,
+                  hsnCodeId: item.hsnCodeId,
+                  stitchingCostPerKgOverride: item.stitchingCostPerKgOverride,
+                  stitchingCostPerPieceOverride: item.stitchingCostPerPieceOverride,
+                  packingCostPerKgOverride: item.packingCostPerKgOverride,
+                  pieceWeightGrams: item.pieceWeightGrams,
+                  qtyKg: item.qtyKg,
+                  costBreakupJson: item.costBreakupJson,
+                  costInputsJson: item.costInputsJson,
+                  accessoryOverrides: item.accessoryOverrides.length
+                    ? { create: item.accessoryOverrides.map((a) => ({ accessoryTypeId: a.accessoryTypeId, costPerPiece: a.costPerPiece })) }
+                    : undefined,
+                  packagingCharges: item.packagingCharges.length
+                    ? { create: item.packagingCharges.map((p) => ({ description: p.description, ratePerPiece: p.ratePerPiece })) }
+                    : undefined,
+                })),
+              },
+            })),
+          },
+        })),
+      },
+    },
+  });
+
+  res.status(201).json(duplicate);
+});
+
 async function loadMasterDataContext(includeCustomers: boolean): Promise<MasterDataContext> {
   const [customers, products, rawMaterials, itemTypes, hsnCodes] = await Promise.all([
     includeCustomers ? prisma.customer.findMany({ select: { id: true, name: true } }) : Promise.resolve(undefined),

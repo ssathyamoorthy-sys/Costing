@@ -247,6 +247,7 @@ export function QuoteDetailPage() {
   const [costDriftExpanded, setCostDriftExpanded] = useState(false);
   const [acceptedComponents, setAcceptedComponents] = useState<Record<number, Set<string>>>({});
   const [applyingRevisedCosts, setApplyingRevisedCosts] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [uploadingPO, setUploadingPO] = useState(false);
@@ -426,6 +427,10 @@ export function QuoteDetailPage() {
   // nested inside the same section rather than gating the whole section on it.
   const isFinanceManager = user?.role === 'FINANCE_MANAGER' || user?.role === 'ADMIN';
   const isAdmin = user?.role === 'ADMIN';
+  // Same role/ownership rule as who can create a quote in the first place, applied to this one -
+  // a Merchandiser can only duplicate their own (they can't even see anyone else's), Supervisor/
+  // Admin can duplicate any.
+  const canDuplicate = (isMerchandiser && isOwner) || isSupervisor;
   // Once locked, pricing is irrevocable for everyone except Admin/Supervisor (emergency
   // escape hatch) - every price-mutating button in this page is gated on this, matching
   // assertNotLocked on the backend.
@@ -972,6 +977,17 @@ export function QuoteDetailPage() {
     }
   }
 
+  async function duplicateQuote() {
+    setDuplicating(true);
+    try {
+      const copy = await api.post<Quote>(`/quotes/${quote!.id}/duplicate`);
+      navigate(`/quotes/${copy.id}`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+      setDuplicating(false);
+    }
+  }
+
   function lockQuote() {
     setConfirmDialog({
       title: 'Lock & Finalize',
@@ -1336,6 +1352,16 @@ export function QuoteDetailPage() {
           {canEditLines && quote.lines.length > 0 && (
             <button className="btn" onClick={saveQuoteAsTemplateGroup} title="Save every set in this quote as one named, reusable recipe">
               Save quote as template
+            </button>
+          )}
+          {canDuplicate && (
+            <button
+              className="btn"
+              onClick={duplicateQuote}
+              disabled={duplicating}
+              title="Create a new DRAFT quote with every Set/Segment/Item copied from this one"
+            >
+              {duplicating ? 'Duplicating...' : 'Duplicate quote'}
             </button>
           )}
           <button className="btn" onClick={() => navigate('/quotes')}>
