@@ -245,6 +245,11 @@ export function QuoteDetailPage() {
   const [costDrift, setCostDrift] = useState<CostCheckResult | null>(null);
   const [costDriftDismissed, setCostDriftDismissed] = useState(false);
   const [costDriftExpanded, setCostDriftExpanded] = useState(false);
+  const [costDriftModalOpen, setCostDriftModalOpen] = useState(false);
+  // Which quote id the auto-popup has already been shown for in this browser session - so it
+  // prompts once per quote (the moment drift is first detected after opening it), not every
+  // time load() re-runs afterward (e.g. after an unrelated edit elsewhere on the page).
+  const costDriftModalShownForRef = useRef<number | null>(null);
   const [acceptedComponents, setAcceptedComponents] = useState<Record<number, Set<string>>>({});
   const [applyingRevisedCosts, setApplyingRevisedCosts] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
@@ -313,7 +318,18 @@ export function QuoteDetailPage() {
     if (user?.role === 'SUPERVISOR' || user?.role === 'ADMIN' || user?.role === 'FINANCE_MANAGER') {
       api
         .get<CostCheckResult>(`/quotes/${id}/cost-check`)
-        .then(setCostDrift)
+        .then((result) => {
+          setCostDrift(result);
+          // Prompt with a modal the moment drift is first found on this quote, rather than
+          // relying on the merchandiser/supervisor to notice a banner - this is the "ask
+          // whether to apply the new prices" the quote-drift feature exists for. Only once
+          // per quote per session (ref, not state, so it survives the many other load() calls
+          // a normal editing session triggers without re-popping every time).
+          if (result.hasChanged && costDriftModalShownForRef.current !== Number(id)) {
+            costDriftModalShownForRef.current = Number(id);
+            setCostDriftModalOpen(true);
+          }
+        })
         .catch(() => {});
     }
   }
@@ -324,6 +340,7 @@ export function QuoteDetailPage() {
   useEffect(() => {
     setCostDriftDismissed(false);
     setCostDriftExpanded(false);
+    setCostDriftModalOpen(false);
     setAcceptedComponents({});
   }, [id]);
 
@@ -352,6 +369,7 @@ export function QuoteDetailPage() {
         .filter((a) => a.keys.length > 0);
       await api.post(`/quotes/${quote.id}/apply-revised-costs`, { accepted });
       setCostDriftExpanded(false);
+      setCostDriftModalOpen(false);
       setAcceptedComponents({});
       load();
     } catch (e) {
@@ -359,6 +377,57 @@ export function QuoteDetailPage() {
     } finally {
       setApplyingRevisedCosts(false);
     }
+  }
+
+  // Shared between the persistent inline banner's expanded state and the auto-popup modal
+  // below, so the per-Set/per-component old-vs-new checklist isn't written out twice.
+  function renderCostDriftLines() {
+    if (!costDrift) return null;
+    return costDrift.lines.map((line) => (
+      <div key={line.lineId} style={{ marginBottom: 10 }}>
+        <strong>{line.color}</strong>: {symbol}
+        {line.oldRate.toFixed(2)} &rarr; {symbol}
+        {line.newRate.toFixed(2)} / set
+        {line.segments.map((seg) => {
+          const allKeys = seg.components.map((c) => c.key);
+          const checked = acceptedComponents[seg.segmentId] ?? new Set(allKeys);
+          return (
+            <table key={seg.segmentId} style={{ marginTop: 4, marginBottom: 8, fontSize: 13 }}>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>{seg.productCode}</th>
+                  <th className="right">Old</th>
+                  <th className="right">New</th>
+                </tr>
+              </thead>
+              <tbody>
+                {seg.components.map((comp) => (
+                  <tr key={comp.key}>
+                    <td>
+                      {canEditLines && (
+                        <input
+                          type="checkbox"
+                          checked={checked.has(comp.key)}
+                          onChange={() => toggleCostDriftComponent(seg.segmentId, comp.key, allKeys)}
+                        />
+                      )}
+                    </td>
+                    <td>{comp.label}</td>
+                    <td className="mono muted right">
+                      {comp.oldValue.toFixed(2)} {comp.unit}
+                    </td>
+                    <td className="mono right">
+                      {comp.newValue.toFixed(2)} {comp.unit}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          );
+        })}
+      </div>
+    ));
   }
   // The error banner renders once, near the top of the page - but most of the buttons that can
   // fail (Match target price, margin overrides, etc.) live inside a Set card far down a long
@@ -1396,56 +1465,34 @@ export function QuoteDetailPage() {
               Dismiss
             </button>
           </div>
-          {costDriftExpanded && (
-            <div style={{ marginTop: 10 }}>
-              {costDrift.lines.map((line) => (
-                <div key={line.lineId} style={{ marginBottom: 10 }}>
-                  <strong>{line.color}</strong>: {symbol}
-                  {line.oldRate.toFixed(2)} &rarr; {symbol}
-                  {line.newRate.toFixed(2)} / set
-                  {line.segments.map((seg) => {
-                    const allKeys = seg.components.map((c) => c.key);
-                    const checked = acceptedComponents[seg.segmentId] ?? new Set(allKeys);
-                    return (
-                      <table key={seg.segmentId} style={{ marginTop: 4, marginBottom: 8, fontSize: 13 }}>
-                        <thead>
-                          <tr>
-                            <th></th>
-                            <th>{seg.productCode}</th>
-                            <th className="right">Old</th>
-                            <th className="right">New</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {seg.components.map((comp) => (
-                            <tr key={comp.key}>
-                              <td>
-                                {canEditLines && (
-                                  <input
-                                    type="checkbox"
-                                    checked={checked.has(comp.key)}
-                                    onChange={() => toggleCostDriftComponent(seg.segmentId, comp.key, allKeys)}
-                                  />
-                                )}
-                              </td>
-                              <td>{comp.label}</td>
-                              <td className="mono muted right">
-                                {comp.oldValue.toFixed(2)} {comp.unit}
-                              </td>
-                              <td className="mono right">
-                                {comp.newValue.toFixed(2)} {comp.unit}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          )}
+          {costDriftExpanded && <div style={{ marginTop: 10 }}>{renderCostDriftLines()}</div>}
         </Alert>
+      )}
+      {costDriftModalOpen && costDrift?.hasChanged && (
+        <Modal
+          title="Costs have changed since this quote was priced"
+          onClose={() => setCostDriftModalOpen(false)}
+        >
+          <p>
+            {symbol}
+            {costDrift.oldTotal.toFixed(2)} &rarr; {symbol}
+            {costDrift.newTotal.toFixed(2)} ({costDrift.deltaPct >= 0 ? '+' : ''}
+            {costDrift.deltaPct.toFixed(1)}%)
+            {' - '}raw material/processing rates used to price this quote have since changed. Review which
+            of the changes below to carry into this quote, or come back to it later.
+          </p>
+          {renderCostDriftLines()}
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setCostDriftModalOpen(false)}>
+              Review later
+            </button>
+            {canEditLines && (
+              <button className="btn primary" disabled={applyingRevisedCosts} onClick={applyRevisedCosts}>
+                {applyingRevisedCosts ? 'Applying...' : 'Apply selected'}
+              </button>
+            )}
+          </div>
+        </Modal>
       )}
       {warnings.map((w, i) => (
         <Alert key={i} type="warning">
