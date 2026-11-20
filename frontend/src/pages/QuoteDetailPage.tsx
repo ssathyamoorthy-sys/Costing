@@ -873,6 +873,14 @@ export function QuoteDetailPage() {
       }),
     }));
   }
+  // Single Product mode is just the 1-segment/1-item case of the same data model as Set/Bundle
+  // - this reuses duplicateItem() to add a second size of the same product/yarn mix, then
+  // switches to the Set/Bundle view (where multiple items render with their own duplicate/
+  // remove controls), since the form's shape genuinely no longer qualifies as "single."
+  function addSizeFromSingle(segIdx: number) {
+    duplicateItem(segIdx, 0);
+    setMode('bundle');
+  }
   function updateItem(segIdx: number, itemIdx: number, patch: Partial<FormItem>) {
     if (patch.hsnCodeId) pushRecentHsnCode(patch.hsnCodeId);
     setForm((f) => ({
@@ -2696,6 +2704,17 @@ export function QuoteDetailPage() {
                   </div>
                 ))}
               </div>
+              {mode === 'single' && (
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    className="btn small"
+                    title="Adds another item row with this same product/yarn recipe, for a second size sold alongside this one"
+                    onClick={() => addSizeFromSingle(segIdx)}
+                  >
+                    + Add another size (same product &amp; yarn mix)
+                  </button>
+                </div>
+              )}
             </div>
           ))}
 

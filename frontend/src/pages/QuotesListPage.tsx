@@ -28,6 +28,22 @@ function statusLabel(status: string) {
   }
 }
 
+const PAGE_SIZE = 20;
+
+// A compact page-number bar: always shows the first and last page, a sliding window around the
+// current page, and "…" where pages are skipped - rather than one button per page, which would
+// get unwieldy once there are a few hundred quotes.
+function pageWindow(current: number, total: number): (number | 'ellipsis')[] {
+  const pages = new Set<number>([1, total, current, current - 1, current + 1]);
+  const sorted = [...pages].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
+  const result: (number | 'ellipsis')[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) result.push('ellipsis');
+    result.push(sorted[i]);
+  }
+  return result;
+}
+
 function statusBadgeClass(status: string) {
   switch (status) {
     case 'DRAFT':
@@ -64,6 +80,7 @@ export function QuotesListPage() {
   const [filterText, setFilterText] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   function load() {
     api
@@ -130,6 +147,12 @@ export function QuotesListPage() {
     'created',
     'desc',
   );
+  // Reset to page 1 whenever the filtered/sorted set changes shape, so a filter that narrows
+  // the list never leaves the view stranded on a now-empty page.
+  useEffect(() => setPage(1), [filterText, filterStatus, sortKey, sortDir]);
+  const totalPages = Math.max(1, Math.ceil(sortedQuotes.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedQuotes = sortedQuotes.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
     <div>
@@ -194,7 +217,7 @@ export function QuotesListPage() {
             </tr>
           </thead>
           <tbody>
-            {sortedQuotes.map((q) => (
+            {pagedQuotes.map((q) => (
               <tr key={q.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/quotes/${q.id}`)}>
                 <td>
                   <Link to={`/quotes/${q.id}`} onClick={(e) => e.stopPropagation()}>
@@ -216,6 +239,35 @@ export function QuotesListPage() {
           </tbody>
         </table>
       </div>
+      {sortedQuotes.length > 0 && (
+        <div className="tag-row" style={{ marginTop: 10, alignItems: 'center' }}>
+          <span className="muted" style={{ fontSize: 13 }}>
+            Showing {(currentPage - 1) * PAGE_SIZE + 1}-{Math.min(currentPage * PAGE_SIZE, sortedQuotes.length)} of{' '}
+            {sortedQuotes.length}
+          </span>
+          {totalPages > 1 && (
+            <>
+              <button className="btn small" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>
+                &laquo; Prev
+              </button>
+              {pageWindow(currentPage, totalPages).map((p, i) =>
+                p === 'ellipsis' ? (
+                  <span key={`e${i}`} className="muted">
+                    …
+                  </span>
+                ) : (
+                  <button key={p} className={`btn small ${p === currentPage ? 'primary' : ''}`} onClick={() => setPage(p)}>
+                    {p}
+                  </button>
+                ),
+              )}
+              <button className="btn small" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>
+                Next &raquo;
+              </button>
+            </>
+          )}
+        </div>
+      )}
         </>
       )}
 
